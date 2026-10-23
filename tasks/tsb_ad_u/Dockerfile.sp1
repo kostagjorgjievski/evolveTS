@@ -1,0 +1,14 @@
+# Standalone CUDA worker; built locally during setup.
+FROM python:3.12-slim-bookworm
+RUN pip install --no-cache-dir numpy==1.26.4 pandas==2.2.3 psutil==7.0.0 \
+    && pip install --no-cache-dir torch==2.10.0 --index-url https://download.pytorch.org/whl/cu126
+RUN pip install --no-cache-dir --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    numpy==1.26.4 pandas==2.2.3 scipy==1.14.1 scikit-learn==1.5.2 \
+    statsmodels==0.14.4 matplotlib==3.9.4
+COPY requirements-libraryts.txt /opt/tsb/requirements-libraryts.txt
+COPY vendor/sktime-0.40.1-py3-none-any.whl /opt/tsb/vendor/
+RUN pip install --no-cache-dir --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r /opt/tsb/requirements-libraryts.txt /opt/tsb/vendor/sktime-0.40.1-py3-none-any.whl \
+    && pip check
+COPY worker.py sandbox.py /opt/tsb/
+ENTRYPOINT []

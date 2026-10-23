@@ -1,0 +1,151 @@
+{
+  "task": "gift_forecasting_v2",
+  "gift_repo": "https://github.com/SalesforceAIResearch/gift-eval",
+  "gift_commit": "3c7be6deffb0046e1c08f9103db8bc84b3cf7ebd",
+  "data_repo": "Salesforce/GiftEval",
+  "data_revision": "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0",
+  "development": [
+    {
+      "key": "m4_yearly/A/short"
+    },
+    {
+      "key": "m4_monthly/M/short"
+    },
+    {
+      "key": "m4_hourly/H/short"
+    },
+    {
+      "key": "electricity/H/short"
+    },
+    {
+      "key": "electricity/H/long"
+    },
+    {
+      "key": "solar/10T/medium"
+    },
+    {
+      "key": "ett1/15T/long"
+    },
+    {
+      "key": "ett2/D/short"
+    },
+    {
+      "key": "hospital/M/short"
+    },
+    {
+      "key": "covid_deaths/D/short"
+    },
+    {
+      "key": "us_births/W/short"
+    },
+    {
+      "key": "saugeen/D/short"
+    },
+    {
+      "key": "jena_weather/10T/medium"
+    },
+    {
+      "key": "kdd_cup_2018/H/long"
+    },
+    {
+      "key": "temperature_rain/D/short"
+    },
+    {
+      "key": "restaurant/D/short"
+    },
+    {
+      "key": "car_parts/M/short"
+    },
+    {
+      "key": "hierarchical_sales/W/short"
+    },
+    {
+      "key": "loop_seattle/H/short"
+    },
+    {
+      "key": "m_dense/H/medium"
+    },
+    {
+      "key": "sz_taxi/15T/long"
+    },
+    {
+      "key": "bitbrains_fast_storage/H/short"
+    },
+    {
+      "key": "bizitobs_l2c/5T/medium"
+    },
+    {
+      "key": "bizitobs_application/10S/long"
+    }
+  ],
+  "development_series_per_configuration": 32,
+  "selection_seed": 20261021,
+  "quantiles": [
+    0.025,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    0.975
+  ],
+  "candidate_seconds_per_configuration": 120,
+  "final_seconds_per_configuration": 3600,
+  "evaluation_seconds": 3600,
+  "candidate_memory_gib": 8,
+  "device": "cuda:0",
+  "memory_limit_kind": "host RSS; CUDA allocator budget also configured for PyTorch",
+  "candidate_threads": 1,
+  "batch_size": 512,
+  "objective": "1 / exp(mean_k log(wQL_k / wQL_ref_k)), reference = the seasonal-naive seed on the same development windows; MASE is reported separately",
+  "objective_weights": {
+    "crps": 1.0,
+    "mase": 0.0
+  },
+  "reference_file": "reference_seasonal_naive.json",
+  "models": {
+    "chronos-2": {
+      "repo": "amazon/chronos-2",
+      "path": "/models/amazon__chronos-2",
+      "licence": "apache-2.0"
+    },
+    "timesfm-2.5": {
+      "repo": "google/timesfm-2.5-200m-pytorch",
+      "path": "/models/google__timesfm-2.5-200m-pytorch",
+      "licence": "apache-2.0"
+    },
+    "timesfm-3": {
+      "repo": "google/timesfm-3.0-pytorch",
+      "path": "/models/google__timesfm-3.0-pytorch",
+      "licence": "timesfm-non-commercial-v1.0 (research use)"
+    },
+    "tirex-2": {
+      "repo": "NX-AI/TiRex-2-gifteval-zs",
+      "path": "/models/NX-AI__TiRex-2-gifteval-zs",
+      "licence": "apache-2.0"
+    },
+    "toto-2.0-313m": {
+      "repo": "Datadog/Toto-2.0-313m",
+      "path": "/models/Datadog__Toto-2.0-313m",
+      "licence": "apache-2.0"
+    },
+    "flowstate-r1.1": {
+      "repo": "ibm-research/flowstate",
+      "revision": "r1.1",
+      "path": "/models/ibm-research__flowstate",
+      "licence": "apache-2.0"
+    },
+    "timestral-209m": {
+      "repo": "mistralai/Timestral-209M",
+      "path": "/models/mistralai__Timestral-209M",
+      "licence": "mistral research licence (revenue cap)"
+    }
+  },
+  "models_host_dir": "checkpoints",
+  "final_scope": "All 97 official configurations, all series, all original test windows; no development caps",
+  "leaderboard_reference": "upstream/gift-eval/results/Seasonal_Naive"
+}

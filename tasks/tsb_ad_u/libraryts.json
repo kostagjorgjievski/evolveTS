@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/NetManAIOps/sktime",
+  "commit": "904bb75717d5f83e9d8177affae2113c9ee3f6b3",
+  "archive_sha256": "67f0a923227789df233d96e37854c004c6005110d1efc6432d6939bf953718b3",
+  "wheel": "sktime-0.40.1-py3-none-any.whl",
+  "wheel_sha256": "2b1a040ef2a5c51a7d7e0775b82821872056e362e9f6ce186e88a640e7e698d9",
+  "exclusions": "bundled data directories, tests and all non-package workflows/skills; runtime source unchanged"
+}

@@ -1,0 +1,95 @@
+Discover a competitive univariate time-series anomaly-detection pipeline under
+this fixed development and execution contract. Improve the EVOLVE block in
+init_program.py. Choose the approach yourself: statistical or fitted methods,
+neural or available pretrained components, preprocessing, selection and
+combinations are permitted. There is no required algorithm family.
+
+Interface:
+    detect(data, train_data, metadata) -> numpy.ndarray, shape (N,)
+
+`data` is the entire unlabelled univariate series, float64 with shape (N, 1).
+This is OFFLINE anomaly detection: using all unlabelled timestamps is permitted,
+as in the official TSB-AD unsupervised runner. It is not a causal/streaming task.
+`train_data` is the official training prefix, shape (T, 1), supporting methods
+that fit on the normal prefix. Return a finite real score for EVERY timestamp
+of `data`, including its prefix. Larger means more anomalous. No binary threshold
+is needed. Metadata contains only seed=2024 and device='cuda:0' (Linux) or 'mps' (Mac). No filename,
+dataset identity, labels, or anomaly locations are provided.
+
+Starting code is a minimal median/MAD detector, not a prescribed solution.
+Every series starts a fresh process: no state, downloads or external services
+persist between series. All necessary code must be in the submitted Python
+file; installed packages may be imported. Available: Python 3.12, NumPy 1.26.4,
+pandas 2.2.3, SciPy 1.14.1, scikit-learn 1.5.2, statsmodels 0.14.4,
+matplotlib 3.9.4, PyTorch 2.10.0 with one CUDA GPU (Linux) or Apple MPS (Mac).
+On Mac, use float32 for MPS tensors, metadata["device"] for device selection,
+and CPU for unsupported operations; explicit PyTorch MPS CPU fallback is enabled.
+The runtime supplies exactly one accelerator evaluation slot on Mac. Pretrained weights are not
+preinstalled; do not assume network access or an unlisted model cache.
+
+The evaluator uses pinned upstream TSB-AD code, its exact CSV dropna loader,
+find_length_rank(..., rank=1) window rule, and the unchanged primary functions
+inside get_metrics(version='opt', thre=250). No additional evaluator normalization is applied: preprocessing is
+your choice as in the official runner. combined_score is the arithmetic mean
+VUS-PR across ALL 48 official TSB-AD-U tuning series (higher is better).
+No series is cropped, subsampled, or dropped after a failure. Any exception,
+timeout, nonfinite output or wrong shape fails the entire candidate (score 0).
+The four official AUC/VUS metrics are reported during search. Expensive F1
+diagnostics are optional in frozen final evaluation only. Official default F1
+values use oracle thresholds and are descriptive only; they do not represent deployable threshold selection.
+
+Execution budget per series: 120 seconds including process/container startup,
+1 CPU thread, 8 GiB host resident memory, one GPU with an 8 GiB PyTorch allocator
+budget (not a hardware memory partition). Fit and scoring both count. No network;
+only the submitted file, input values and scratch are exposed to candidate code.
+GPU evaluations queue using the same resource locks as forecasting; this does
+not share controllers, histories, replay or scientific results across tasks.
+Development evaluation has a 10,800-second total timeout after obtaining a GPU;
+the upstream outer evaluation timeout defaults to 14,400 seconds including queue.
+
+Discovery follows upstream Dream-RSI settings: by default 10 branches x 11
+attempts, up to 10 coding workers per round, 10 rounds, and the original
+controller rewrite/replay/promotion logic. Explicit launch overrides are recorded.
+All controller calls, replays and failed attempts count in experiment accounting.
+
+Use only this task's provided feedback and permitted source/tools. Do not read
+or retrieve benchmark labels, official evaluation examples, filenames encoding
+anomaly positions, published per-series predictions, or evaluation-set results.
+Do not hard-code series recognition, anomaly positions, or dataset-specific
+lookup tables. Do not modify the evaluator, protocol, seed outside EVOLVE blocks,
+upstream source, sandbox, or shared infrastructure.
+
+Final evaluation is separate: a program is selected and frozen by SHA-256 before
+scoring the 350-series official default evaluation list or explicitly the full
+822-series evaluation list. Neither evaluation split supplies discovery feedback.
+A development improvement is not a SOTA result. Evaluate pipeline quality and
+RSI benefit separately, comparing fixed exploration at matched total costs,
+with identical coding model, tools, initial code and data access.
+
+Optional LibraryTS toolbox (no required method family):
+The lab fork NetManAIOps/sktime is installed as `sktime==0.40.1`, pinned at
+904bb75717d5f83e9d8177affae2113c9ee3f6b3. Its datasets and skills are excluded.
+Installed optional packages: pyod 1.1.3, skchange 0.14.3, hmmlearn 0.3.3,
+numba 0.61.2, scikit-base 0.13.2, joblib 1.5.2. Other extras and pretrained
+weights are not implied by the catalog. Existing resource limits still apply.
+Useful APIs to consider (selection remains yours):
+- `from pyod.models.ecod import ECOD` (also KNN, IForest and other PyOD models):
+  fit a model on your chosen feature matrix, then `decision_function(X)` gives
+  one continuous anomaly score per row. Build/align any temporal windows yourself.
+- `from sktime.detection.adapters import PyODDetector`: wraps a PyOD estimator.
+  Its `predict` can be sparse even with labels="score"; do not treat it as a
+  length-N score vector. Use fitted `estimator_.decision_function(X)` for dense
+  scores, or import the underlying PyOD model directly.
+- `sktime.detection.compose.DetectorPipeline` and transformations support
+  composing preprocessing and detection methods.
+- `sktime.detection.skchange_aseg`: CAPA, MVCAPA, CircularBinarySegmentation,
+  StatThresholdAnomaliser. `fit_predict` returns events/segments, not automatically
+  meaningful continuous scores. `skchange.anomaly_detectors` is also available.
+- `sktime.detection.skchange_cp`: MovingWindow, PELT, SeededBinarySegmentation;
+  these detect change points. Supply your own justified dense anomaly scoring
+  if using them; do not return raw change-point indices as timestamp scores.
+- `hmmlearn.hmm.GaussianHMM` supports fitted sequence likelihoods/posteriors.
+- `sktime.forecasting.naive.NaiveForecaster` and other core forecasting and
+  transformation/composition APIs can be used to construct residual detectors.
+Do not use bundled/external datasets or change benchmark metrics. All search
+methods, including fixed exploration, must receive this same toolbox.

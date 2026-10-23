@@ -1,0 +1,9 @@
+# v2 worker packages; resolved by uv with overrides-v2-worker.txt (see Dockerfile.sp1).
+numpy
+pandas
+chronos-forecasting>=2.1
+timesfm[torch]==3.0.2
+tirex-2==0.1.1
+toto-2 @ file:///opt/src/toto2-9213d2c.tar.gz
+timestral @ file:///opt/src/timestral-a534bdb.tar.gz
+granite-tsfm @ file:///opt/src/granite-tsfm-dfe846e.tar.gz

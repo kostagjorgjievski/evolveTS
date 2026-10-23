@@ -1,0 +1,46 @@
+{
+  "benchmark_repo": "https://github.com/TheDatumOrg/TSB-AD",
+  "benchmark_commit": "303dffbfc11612995b17b06633f8c9d0ea0e38e5",
+  "dream_rsi_commit": "8ec35bd2538220517ce1bfca4282db21b8c518db",
+  "data_url": "https://www.thedatum.org/datasets/TSB-AD-U.zip",
+  "data_sha256": "0c47020d3423723c70773736dbd800369f2b487328becbf339450d1ae5020961",
+  "development_list": "TSB-AD-U-Tuning.csv",
+  "evaluation_list": "TSB-AD-U-Eva.csv",
+  "full_evaluation_list": "TSB-AD-U-Eva-Full.csv",
+  "development_series": 48,
+  "evaluation_series": 350,
+  "full_evaluation_series": 822,
+  "selection_seed": 2024,
+  "candidate_seconds_per_series": 120,
+  "candidate_memory_gib": 8,
+  "candidate_threads": 1,
+  "device": "cuda:0",
+  "development_evaluation_timeout_seconds": 10800,
+  "outer_evaluation_timeout_seconds": 14400,
+  "metric_window": "official find_length_rank(data[:, 0].reshape(-1, 1), rank=1)",
+  "metric_version": "opt",
+  "metric_thresholds": 250,
+  "objective": "arithmetic mean of official VUS-PR across all 48 tuning series; any failure fails the candidate",
+  "data_access": "offline unsupervised full unlabelled series and official training prefix; no labels, file names, dataset identities or anomaly positions",
+  "normalization": "no additional evaluator normalization; candidate chooses preprocessing as in official runner",
+  "reported_metrics": [
+    "AUC-PR",
+    "AUC-ROC",
+    "VUS-PR",
+    "VUS-ROC"
+  ],
+  "metric_implementation": "unchanged basic_metricor.metric_PR/metric_ROC and generate_curve, the exact four primary calculations inside official get_metrics",
+  "secondary_f1": "optional --all-metrics frozen final evaluation only; official get_metrics default oracle thresholds; descriptive only, not deployable threshold selection; undefined secondary values are null",
+  "libraryts": {
+    "repository": "https://github.com/NetManAIOps/sktime",
+    "commit": "904bb75717d5f83e9d8177affae2113c9ee3f6b3",
+    "package": "sktime==0.40.1",
+    "manifest": "libraryts.json",
+    "dependencies": "requirements-libraryts.txt",
+    "data_and_skills_installed": false
+  },
+  "execution_profiles": {
+    "linux": "CUDA; existing host profiles and sandbox",
+    "macos": "MPS with explicit CPU fallback for unsupported operations; single evaluation slot; identical time and host-memory limits; see host profile"
+  }
+}

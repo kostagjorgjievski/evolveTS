@@ -1,0 +1,8 @@
+# Minimal official loader/scoring dependencies; no change to Dream-RSI's venv.
+gluonts==0.15.1
+datasets==2.17.1
+numpy==1.26.4
+pandas==2.2.3
+python-dotenv==1.0.0
+pyarrow==19.0.1
+huggingface-hub==0.29.3

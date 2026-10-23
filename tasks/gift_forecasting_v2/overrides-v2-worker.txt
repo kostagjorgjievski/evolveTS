@@ -1,0 +1,7 @@
+# toto-2 needs torch>=2.14; tirex-2 0.1.1 declares torch<2.10 and huggingface-hub~=0.32,
+# which granite-tsfm's transformers rejects. These deliberate unified-worker
+# overrides do not satisfy all package-declared ranges: pip check reports them.
+# Actual restricted GPU inference is verified by smoke_models.sh; this does not
+# establish numerical equivalence to each package's original environment.
+torch==2.14.1+cu126
+huggingface-hub>=0.34,<2

@@ -1,0 +1,26 @@
+# v2 candidate worker: CUDA PyTorch plus the leakage-free foundation-model packages.
+# Checkpoints are not baked in; the evaluator mounts them read-only at /models
+# (see protocol.json "models"). vendor/ holds pinned GitHub source tarballs
+# (sha256 in vendor/SHA256SUMS); toto2 is the toto2/ subfolder of DataDog/toto.
+FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm
+ARG INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+# Triton (used by Chronos-2, TimesFM-2.5, Timestral) builds its kernel launcher with a
+# C compiler at first use; torch.compile on CPU (e.g. TiRex-2 on CPU) needs a C++ compiler.
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update && apt-get install -y --no-install-recommends gcc g++ libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir --index-url $INDEX uv==0.13.0
+COPY vendor/*.tar.gz /opt/src/
+COPY requirements-v2-worker.in overrides-v2-worker.txt /opt/
+# A GitHub tarball has no git metadata; granite-tsfm reads its version from it.
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRANITE_TSFM=0.0.0+dfe846e
+RUN uv pip install --system --no-cache --index-url $INDEX \
+      --extra-index-url https://download.pytorch.org/whl/cu126 --index-strategy unsafe-best-match \
+      -r /opt/requirements-v2-worker.in --override /opt/overrides-v2-worker.txt \
+ && uv pip freeze --system > /opt/requirements-v2-worker.lock.txt
+# xlstm (imported by tirex2) looks up CUDA include paths at import; there is no
+# CUDA toolkit here, and TiRex-2 runs its sLSTM through flashrnn instead.
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 CUDA_HOME=/usr/local/cuda
+COPY worker.py sandbox.py /opt/gift/
+RUN mkdir -p /job /output /models
+ENTRYPOINT []

@@ -1,0 +1,126 @@
+Given historical time-series data, permitted tools, and a fixed development
+budget, discover a competitive probabilistic forecasting pipeline. Choose the
+approach: statistical models, fitted models, pretrained foundation models,
+combinations, or others. The starting program is seasonal naive. No particular
+algorithm is required.
+
+Edit the EVOLVE block of the single starting Python file. Define:
+
+  fit(training_series, metadata) -> state                 # optional
+  forecast(histories, horizon, metadata, state) -> dict   # required
+
+training_series and histories are lists of one-dimensional NumPy target arrays.
+Training targets end before the validation origin. Histories end at each forecast
+origin. Missing historical observations may be NaN. No target labels are inputs.
+metadata contains frequency, seasonality, seed, horizon, quantiles, device, and
+models (name -> checkpoint directory, listed below). It also contains
+training_item_ids, training_starts, history_item_ids, and history_starts (period
+strings), aligned with the respective array lists.
+Return finite NumPy-compatible arrays:
+  mean:      [number of histories, horizon]
+  quantiles: [number of histories, 11, horizon]
+Quantiles must be nondecreasing in this order:
+  0.025, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.975.
+Use only historical inputs when fitting, selecting models, or preprocessing.
+
+Evaluation uses the pinned official GIFT-Eval Dataset loader, forecast horizons,
+frequency seasonality, independent univariate channels, and GluonTS metrics.
+Development feedback uses one validation horizon immediately before the first
+official test origin, on 24 fixed configurations covering all seven domains and
+short, medium and long terms:
+  m4_yearly/A/short, m4_monthly/M/short, m4_hourly/H/short, electricity/H/short,
+  electricity/H/long, solar/10T/medium, ett1/15T/long, ett2/D/short,
+  hospital/M/short, covid_deaths/D/short, us_births/W/short, saugeen/D/short,
+  jena_weather/10T/medium, kdd_cup_2018/H/long, temperature_rain/D/short,
+  restaurant/D/short, car_parts/M/short, hierarchical_sales/W/short,
+  loop_seattle/H/short, m_dense/H/medium, sz_taxi/15T/long,
+  bitbrains_fast_storage/H/short, bizitobs_l2c/5T/medium,
+  bizitobs_application/10S/long.
+At most 32 deterministically selected series/channels per configuration are used.
+
+The objective targets probabilistic forecasting quality using the same CRPS
+approximation reported by GIFT-Eval. For every configuration k, the program's
+CRPS (GluonTS mean_weighted_sum_quantile_loss over levels 0.1..0.9) is divided
+by the seasonal-naive reference CRPS on identical development windows:
+  relative_crps = exp(mean_k log(CRPS_k / CRPS_ref_k))
+  combined_score = 1 / relative_crps
+Higher is better; the seed scores 1.0. All 24 configurations have equal weight.
+MASE and all other official metrics are reported as diagnostics, but MASE has
+zero weight in the search objective. This development objective is not the
+leaderboard's average-rank statistic. Invalid output, timeout or a failed
+configuration gives score zero; configurations are never silently dropped.
+
+Runtime per configuration: 120 seconds including imports, model loading, fitting,
+prediction, and writing outputs. Each configuration runs in a fresh isolated
+process, so loaded models do not persist between configurations. 8 GiB host
+resident-memory budget; one CPU core and one numerical thread. One RTX 3080 Ti
+(12 GiB) is available as cuda:0 through PyTorch 2.14.1 (CUDA 12.6 build), with an
+8 GiB PyTorch CUDA allocator budget (an allocator setting, not a hardware
+partition). A full development evaluation has a 3,600-second outer limit.
+Installed: NumPy 2.1.3, pandas, PyTorch, GluonTS 0.17, transformers, Triton, a
+C/C++ compiler, and the model packages below. There is no CUDA toolkit (nvcc).
+
+Pretrained checkpoints are mounted read-only at the metadata["models"] paths.
+Their availability does not establish absence of pretraining overlap; checkpoint
+provenance and any known overlap must be disclosed with final results.
+Load them only from these local paths; there is no network. Quantile heads cover
+levels 0.1..0.9; levels 0.025 and 0.975 must be produced by the program.
+Measured inside this worker (32 hourly series of length 2048, horizon 48):
+load seconds / forecast seconds / peak CUDA GiB.
+  chronos-2 (Apache-2.0)                      25 / 5 / 0.6
+      from chronos import BaseChronosPipeline
+      p = BaseChronosPipeline.from_pretrained(path, device_map="cuda")
+      q, mean = p.predict_quantiles([x[None] for x in xs], prediction_length=H,
+                                    quantile_levels=[...])  # per series [1, H, Q]
+  timesfm-2.5 (Apache-2.0)                    21 / 64 / 1.6 (cold first forecast)
+      from timesfm import configs; from timesfm.timesfm_2p5 import timesfm_2p5_torch
+      m = timesfm_2p5_torch.TimesFM_2p5_200M_torch()
+      m.load_checkpoint(path + "/model.safetensors")
+      m.compile(configs.ForecastConfig(max_context=..., max_horizon=H, ...))
+      point, full = m.forecast(horizon=H, inputs=xs)  # full [B, H, 1+9]: mean, q0.1..q0.9
+      # Set max_horizon to the requested horizon: decoding an unnecessary 1024
+      # steps made this same 48-step check exceed the 120-second total budget.
+  timesfm-3 (TimesFM non-commercial licence; research use)   7 / 1.3 / 1.4
+      from timesfm3 import TimesFM3Evaluator, ModelConfig
+      m = TimesFM3Evaluator(ModelConfig(checkpoint_path=path, device="cuda",
+                                        local_files_only=True, per_core_batch_size=32))
+      outs = m.predict_batch(contexts=xs, horizon=H, return_quantiles=True)
+      # iterator; each .quantiles is [H, 9]
+  tirex-2 (Apache-2.0)                        21 / 26 / 0.6
+      from tirex2 import load_model; from tirex2.model.types import TimeseriesType
+      m = load_model(path, device="cpu"); m.model.to("cuda")
+      # built on "cpu", its sLSTM uses a pure-PyTorch kernel that also runs on CUDA;
+      # device="cuda" would need nvcc, which is not installed.
+      outs = m.forecast([TimeseriesType(torch.tensor(x)[None], None, None) for x in xs],
+                        prediction_length=H, output_type="numpy")  # each [1, 9, H]
+  toto-2.0-313m (Apache-2.0)                  34 / 0.8 / 1.4
+      from toto2 import Toto2Model
+      m = Toto2Model.from_pretrained(path).to("cuda").eval()
+      q = m.forecast({"target": t, "target_mask": mask, "series_ids": ids}, horizon=H,
+                     decode_block_size=768, has_missing_values=...)
+      # t [B, 1, T] float, mask bool like t, ids [B, 1] long; q [9, B, 1, H]
+  flowstate-r1.1 (Apache-2.0)                 27 / 1.8 / 4.0
+      from tsfm_public import FlowStateForPrediction
+      from tsfm_public.models.flowstate.utils.utils import get_fixed_factor
+      m = FlowStateForPrediction.from_pretrained(path).to("cuda").eval()
+      s = get_fixed_factor(freq, domain)  # pandas-style codes, e.g. "H", "15T", "D", "W", "M"
+      out = m(past_values=x, scale_factor=s, prediction_length=H, batch_first=False)
+      # x [T, B, 1]; out.quantile_outputs [B, 9, H, 1]; context ~ config.context_length / s
+  timestral-209m (Mistral research licence)   6 / 5 / 0.9
+      from timestral import TimestralForecaster
+      m = TimestralForecaster.from_pretrained(path, device="cuda")
+      f = m.forecast(context, H)  # context [B, 1, T]; f.quantiles [B, 1, H, len(m.quantile_levels)]
+These are working calls, not recommendations; any use or none is allowed.
+Raw model quantiles can cross (observed for Chronos-2 in the synthetic check).
+Check their order and handle crossings before returning the final quantiles.
+
+The isolated candidate cannot use network, evaluator labels, raw benchmark
+files, project secrets, or other run artifacts. Submit one self-contained file.
+The coding agent must not inspect, retrieve, or tune against official test
+targets or test scores. Do not modify this evaluator, protocol, or benchmark files.
+
+Final official test data is not development feedback. The selected program is
+frozen before final evaluation. Full leaderboard comparison requires all 97
+official configurations, all original series/channels and test windows, the
+official 15-column CSV, and the official result validator. Development-subset
+scores must never be presented as full GIFT-Eval leaderboard scores.
