@@ -16,10 +16,34 @@ def _close(controller):
         controller.dispatcher.store.close()
 
 
+def _follow_up_requirements(root, record, task):
+    if not record['origin'].startswith('public_hypothesis_follow_up:'):
+        return {}, None
+    from .publisher import verify_export
+    from math import isfinite
+    checkpoint = record['checkpoint']
+    handoff = Path(checkpoint['public_inputs'][0]['path']).resolve()
+    if not handoff.is_relative_to(root.resolve()/'follow-up-inputs'):
+        raise ValueError('Follow-up handoff outside own research root')
+    data = json.loads((handoff/'RESEARCH-HANDOFF.json').read_text())
+    export = Path(data['parent_export']).resolve()
+    parent_root = root.resolve()/'jobs/autoresearch-seeder'/task/checkpoint['parent_investigation']/'exports'
+    if not export.is_relative_to(parent_root) or not verify_export(export)['ok']:
+        raise ValueError('Follow-up requires its exact certified public parent')
+    manifest = json.loads((export/'MANIFEST.json').read_text())
+    scores = [manifest[k]['score'] for k in ('development', 'confirmation')]
+    if manifest['task'] != task or any(isinstance(s, bool) or not isinstance(s, (int,float))
+                                     or not isfinite(s) or s <= 0 for s in scores):
+        raise ValueError('Follow-up parent score/task invalid')
+    return {'research_parent_score': min(scores), 'research_parent_export': str(export),
+            'research_target_hypothesis': data['hypothesis']['id']}, data['hypothesis']
+
+
 def _create_job(root, record, research):
     from . import ROOT
     from .__main__ import cmd_init
     task = research.get('task', 'dfthcsos')
+    follow_up_validation, inherited_hypothesis = _follow_up_requirements(root, record, task)
     job = root / 'jobs/autoresearch-seeder' / task / record['id']
     if (job / 'job.json').exists():
         # Upgrade the initial accepted scout's execution routing only at a
@@ -30,7 +54,8 @@ def _create_job(root, record, research):
         target_budgets = {'model_session_seconds': record['budgets']['max_model_seconds'],
                           'max_total_cost_usd': record['budgets']['max_usd']}
         budget_changed = any(existing['budgets'].get(k) != v for k, v in target_budgets.items())
-        if not existing.get('validation',{}).get('deferred_development') or budget_changed:
+        follow_up_changed = any(existing['validation'].get(k) != v for k,v in follow_up_validation.items())
+        if not existing.get('validation',{}).get('deferred_development') or budget_changed or follow_up_changed:
             from .controller import _process_alive
             lease_path=job/'private/lease.json'
             lease=json.loads(lease_path.read_text()) if lease_path.exists() else {}
@@ -40,6 +65,7 @@ def _create_job(root, record, research):
             from .store import ResearchStore
             before=digest(existing)
             existing.setdefault('validation',{})['deferred_development']=True
+            existing['validation'].update(follow_up_validation)
             existing['budgets'].update(target_budgets)
             existing['budgets']['job_wall_clock_seconds'] = max(
                 existing['budgets']['job_wall_clock_seconds'], record['budgets']['max_model_seconds'] * 4)
@@ -47,6 +73,8 @@ def _create_job(root, record, research):
             data['config_digest']=digest(existing)
             atomic_write(job/'job.json',json.dumps(data,indent=2))
             store=ResearchStore(job/'private/research.sqlite')
+            if inherited_hypothesis and not store.get_hypothesis(inherited_hypothesis['id']):
+                store.record_hypothesis(inherited_hypothesis)
             store.event('infrastructure_routing_migration',{'before':before,'after':digest(existing),
                         'change':'align trusted agenda budgets/routing at idle boundary; consumption and official protocol unchanged'})
             store.close()
@@ -56,6 +84,7 @@ def _create_job(root, record, research):
     base.update(enabled=True, task=task)
     base['provider'] = research.get('reproducer', research['provider'])
     base['validation']['deferred_development'] = True
+    base['validation'].update(follow_up_validation)
     base['budgets'].update(model_session_seconds=total['max_model_seconds'],
                            job_wall_clock_seconds=max(14400, total['max_model_seconds'] * 4),
                            max_total_cost_usd=total['max_usd'])
@@ -95,6 +124,11 @@ def _create_job(root, record, research):
                                  'source claims and author scores are not local measurements.'})
         finally:
             store.close()
+    if inherited_hypothesis:
+        from .store import ResearchStore
+        store=ResearchStore(job/'private/research.sqlite')
+        store.record_hypothesis(inherited_hypothesis)
+        store.close()
     return job
 
 
@@ -117,6 +151,8 @@ def _finding(controller, record, knowledge, facts, job, role):
                                         and e['kind'] in ('development_validation', 'confirmation_validation')],
                         'task_protocol_sha256': controller.adapter.identity()['protocol_sha256']}
     elif role == 'reproducer':
+        if (store.last_decision() or {}).get('action') == 'reject':
+            return None
         # A passing diagnostic is a limited result, never an official score.
         passing = {e['id']: e for e in experiments if e['kind'] == 'diagnostic' and e['status'] == 'pass'}
         decisions = [d for d in store.list_decisions() if d['action'] in ('continue', 'refine')
@@ -297,7 +333,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
             usd=max(0, after['usd'] - before['usd']), checkpoint_update=checkpoint, activity_digest=activity)
         from .controller import TERMINAL
         if state['stage'] in TERMINAL:
-            status = 'completed' if state['stage'] == 'seed_ready' else 'shelved'
+            status = 'completed' if state['stage'] in ('seed_ready','completed_no_improvement') else 'shelved'
             agenda.db.execute('UPDATE investigations SET status=? WHERE id=?', (status, record['id']))
             agenda.db.commit()
             updated = agenda.get(record['id'])

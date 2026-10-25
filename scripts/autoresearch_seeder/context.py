@@ -38,6 +38,12 @@ def build_prepared_context(job, store, adapter, config, job_dir=None) -> str:
     lines.append(f"- frozen starting artifact sha256: {identity['seed_program_sha256']}"
                  ' (valid fallback; keep it available)')
     lines.append(f"- normalized baseline: {adapter.baseline_score()}")
+    if config.get('validation', {}).get('research_parent_score') is not None:
+        lines.append(f"- certified research parent score: {config['validation']['research_parent_score']} "
+                     '(original normalization unchanged; a follow-up seed must exceed this on both salts)')
+        lines.append(f"- target hypothesis: {config['validation'].get('research_target_hypothesis')}; "
+                     'test this direction, not merely the already-certified parent. '
+                     'Record an evidence-backed rejection if the new method is unsound.')
     lines.append('')
     lines.append('## Current job state')
     lines.append(f"- stage: {job.get('stage')}")

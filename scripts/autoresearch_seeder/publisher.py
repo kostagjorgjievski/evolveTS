@@ -108,6 +108,10 @@ def evaluate_gates(controller) -> dict:
             elif score <= baseline + margin:
                 reasons.append(f'{label} score {score} does not exceed baseline '
                                f'{baseline} + margin {margin}')
+            parent_score = config.get('validation', {}).get('research_parent_score')
+            if parent_score is not None and isinstance(score, (int,float)) and score <= parent_score:
+                reasons.append(f'{label} score does not improve certified research parent {parent_score}; '
+                               'unchanged-parent repackaging is not follow-up progress')
     # Trust envelope: receipts must validate through the task's own adapter.
     if isinstance(development, dict) and development:
         try:
@@ -294,6 +298,12 @@ def publish(controller, export: bool = True, force: bool = False) -> dict:
             'installed_into_campaign': False,
             'created_utc': utc(),
         }
+        if controller.config.get('validation', {}).get('research_parent_score') is not None:
+            manifest['research_follow_up'] = {
+                'parent_score_original_normalization': controller.config['validation']['research_parent_score'],
+                'parent_export': controller.config['validation'].get('research_parent_export'),
+                'target_hypothesis': controller.config['validation'].get('research_target_hypothesis'),
+                'criterion': 'both official scores exceed the certified research parent; normalization unchanged'}
         (seed_dir / 'MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
         seal_export(seed_dir)
     verification = verify_export(seed_dir)

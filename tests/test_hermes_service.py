@@ -263,10 +263,11 @@ def test_approved_agenda_budget_reload_keeps_consumption_and_artifact(tmp_path):
     ('scout',1,'agenda',None),('reproducer',1,'agenda',None),
     (None,0,'public_hypothesis_follow_up:parent:hypothesis','reproducer')])
 def test_scout_window_hands_off_even_without_structured_hypothesis(
-        tmp_path, previous_role, previous_sessions, origin, start_role):
+        tmp_path, monkeypatch, previous_role, previous_sessions, origin, start_role):
     scaffold=build_job(tmp_path,E2E_SCRIPT)
     root=tmp_path/'research';root.mkdir()
     agenda=Investigations(root/'investigations.sqlite');knowledge=KnowledgeBase(root/'knowledge.sqlite')
+    monkeypatch.setattr('scripts.autoresearch_seeder.research_runtime._follow_up_requirements',lambda *args:({},None))
     item=agenda.create('Scout source research without structured metadata',origin=origin,budgets={'max_model_seconds':60})
     item['consumed']['sessions']=previous_sessions
     item['checkpoint'].update(role=previous_role,start_role=start_role)
@@ -328,3 +329,43 @@ def test_idle_agenda_advances_own_unselected_public_hypothesis_only(
     else:
         assert result is None
     agenda.close()
+
+
+def test_follow_up_same_parent_score_keeps_research_open_without_confirmation(tmp_path):
+    c=build_job(tmp_path,[])
+    c.config['validation'].update(research_parent_score=3.0,research_target_hypothesis='target')
+    c.save_job(stage='implementing')
+    e={'id':'same-parent','kind':'development_validation','status':'pass',
+       'metrics':{'combined_score':3.0},'input_bundle_sha256':c._current_bundle()}
+    c.store.record_experiment(e)
+    c._resolve_development(e,6)
+    assert c.job_state()['stage']=='implementing'
+    assert c.store.list_experiments('confirmation_validation')==[]
+    assert c.adapter.baseline_score()==1.0
+    c.store.record_decision({'action':'reject','hypothesis_id':'target'})
+    c._resolve_development(e,6)
+    assert c.job_state()['stage']=='completed_no_improvement'
+    assert c.store.totals()=={}
+
+
+def test_publisher_refuses_unchanged_parent_follow_up_without_renormalizing(tmp_path):
+    from scripts.autoresearch_seeder.publisher import evaluate_gates
+    c=build_job(tmp_path,E2E_SCRIPT);c.run()
+    assert c.job_state()['stage']=='seed_ready'
+    old=evaluate_gates(c);score=old['evidence']['scores']['development']
+    c.config['validation']['research_parent_score']=score
+    gates=evaluate_gates(c)
+    assert not gates['accepted']
+    assert any('research parent' in x for x in gates['reasons'])
+    assert gates['evidence']['baseline']==1.0
+    assert gates['evidence']['scores']['development']==score
+
+
+def test_follow_up_negative_target_closes_without_republishing_parent(tmp_path):
+    c=build_job(tmp_path,[])
+    c.config['validation'].update(research_parent_score=3.0,research_target_hypothesis='target')
+    c.store.record_decision({'action':'reject','hypothesis_id':'target','notes':'Unsupported gate; see own source audit'})
+    c._advance('queued')
+    assert c.job_state()['stage']=='completed_no_improvement'
+    assert not list((c.job_dir/'exports').glob('seed-*'))
+    assert c.store.totals()=={}

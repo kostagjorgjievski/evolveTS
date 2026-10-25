@@ -168,3 +168,28 @@ can exhaust; idle checks then make zero model calls until new authorized work
 or the next daily agenda becomes available. Partial handoff copies recover
 before admission. Parent artifact and cached-reference sizes are bounded to
 fit the existing public-input limit.
+
+## Follow-up progress versus revalidating a known parent
+
+A live follow-up requested full verification of an unchanged public parent
+without completing its proposed J-sweep. The artifact was valid, but the old
+baseline-only completion rule incorrectly ended the investigation. Existing
+exports remain valid immutable artifacts; this is not a new scientific gain.
+
+Follow-up configuration now derives the parent's conservative score directly
+from its seal-verified export manifest. Both official scores must exceed that
+research-parent score to publish a follow-up seed. The original task reference,
+score normalization, verifier and scoring code remain unchanged. A PASS at the
+parent score stays in the experiment ledger and returns the worker to research,
+rather than confirming/repackaging the same artifact and ending its budget.
+An explicit rejection of the inherited target closes with no improvement and
+preserves the negative evidence; it does not publish a fallback as a new method.
+The inherited hypothesis retains its original model-authored identifier, and
+prepared context states the parent score and target. Rejected targets do not
+become positive diagnostic advice. New exports record the separate parent
+comparison in their manifest.
+
+The full suite passes136tests, including unchanged-parent continuation,
+negative-outcome closure, independent publisher refusal and preservation of
+original normalization. Read-only preflight also verified parent provenance and
+scores on the live follow-up handoffs before deploying this routing change.

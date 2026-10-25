@@ -501,6 +501,13 @@ class Controller:
         confirmations = [e for e in experiments if e['kind'] == 'confirmation_validation']
         max_attempts = int(self.config.get('validation', {}).get(
             'max_development_attempts', 6))
+        target = self.config.get('validation', {}).get('research_target_hypothesis')
+        if target and any(d.get('hypothesis_id') == target and d['action'] == 'reject' for d in decisions):
+            self.save_job(stage='completed_no_improvement', terminal={
+                'reason': 'reproducer rejected follow-up target; evidence retained in own ledger',
+                'hypothesis_id': target, 'utc': utc()})
+            self.store.event('terminal', {'stage': 'completed_no_improvement', 'hypothesis_id': target})
+            return
 
         if stage == 'queued':
             self.save_job(stage='researching')
@@ -550,6 +557,26 @@ class Controller:
     def _resolve_development(self, experiment, max_attempts: int) -> None:
         score = (experiment.get('metrics') or {}).get('combined_score')
         baseline = self.adapter.baseline_score()
+        parent_score = self.config.get('validation', {}).get('research_parent_score')
+        if parent_score is not None and experiment['status'] == 'pass' and score is not None and score <= parent_score:
+            target = self.config['validation'].get('research_target_hypothesis')
+            rejected = any(d.get('hypothesis_id') == target and d['action'] == 'reject'
+                           for d in self.store.list_decisions())
+            attempts = len(self.store.list_experiments('development_validation'))
+            terminal = rejected or attempts >= max_attempts
+            self.save_job(stage='completed_no_improvement' if terminal else 'implementing',
+                checkpoint={**self.job_state().get('checkpoint', {}),
+                    'research_parent_score': parent_score,
+                    'follow_up_no_improvement': experiment['id'],
+                    'next_action': 'Test the unimplemented hypothesis; revalidating the unchanged parent '
+                                   'does not complete this follow-up. Keep original score normalization.'},
+                **({'terminal': {'reason': 'follow-up did not improve certified parent',
+                                  'score': score, 'utc': utc()}} if terminal else {}))
+            prior = self.store.list_events('follow_up_no_improvement')
+            if not any(e.get('experiment_id') == experiment['id'] for e in prior):
+                self.store.event('follow_up_no_improvement', {'experiment_id': experiment['id'],
+                    'score': score, 'parent_score': parent_score, 'target_rejected': rejected})
+            return
         margin = float(self.config.get('validation', {}).get('improvement_margin', 0.0))
         if experiment['status'] == 'pass' and score is not None and score > baseline + margin:
             self.save_job(stage='confirmation',
@@ -667,6 +694,13 @@ class Controller:
             self.store.event('terminal', {'stage': 'seed_ready',
                                           'seed_id': outcome['seed_id']})
         else:
+            if self.config.get('validation', {}).get('research_parent_score') is not None and all(
+                    'research parent' in reason for reason in outcome['reasons']):
+                self.save_job(stage='implementing', checkpoint={
+                    **self.job_state().get('checkpoint', {}),
+                    'next_action': 'Confirmation did not improve the certified research parent; '
+                                   'continue the new hypothesis with original normalization.'})
+                return
             self.save_job(stage='rejected',
                           terminal={'reason': 'publisher gates failed',
                                     'reasons': outcome['reasons'], 'utc': utc()})

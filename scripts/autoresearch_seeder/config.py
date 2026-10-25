@@ -98,6 +98,10 @@ def validate(config: dict, *, require_enabled: bool = False) -> dict:
     if not isinstance(task, str) or not task.replace('_', 'a').isalnum() or not task[0].isalpha() or not task[0].islower():
         raise ConfigError('task must be a lowercase task id')
     blocked = config.get('research', {}).get('blocked_hosts', [])
+    parent_score = config.get('validation', {}).get('research_parent_score')
+    if parent_score is not None and (isinstance(parent_score, bool)
+            or not isinstance(parent_score, (int,float)) or not math.isfinite(parent_score) or parent_score <= 0):
+        raise ConfigError('validation.research_parent_score must be finite and positive')
     if not isinstance(blocked, list) or not all(isinstance(host, str) for host in blocked):
         raise ConfigError('research.blocked_hosts must be a list of hostnames')
     if config.get('production', {}).get('automatic_enable'):
