@@ -1,0 +1,60 @@
+{
+  "seed_id": "seed-seed_demo-714f775f2189e757",
+  "task": "seed_demo",
+  "task_manifest_sha256": "8067c4ab5b88adf103f98b7165baf1f4b5b561a176d5e8d5127429a41d7917d2",
+  "task_protocol_sha256": "c91e1b540f36ddd1c26d0315efc3907a6e6457293cebc1c87d7ded20c3068fd1",
+  "parent_baseline": {
+    "identity": "official frozen starting artifact",
+    "sha256": "faae6f100026fa214bb834c86a268412790b13ce77ce775b7db039114524e336",
+    "normalized_score": 1.0
+  },
+  "candidate_bundle_sha256": "641f7611a51771885891d8d2236f31c02aa5a4087de0db216d6a3978c7a34301",
+  "development": {
+    "receipt_sha256": "bc678422caec7297e9a703e8da9a3ef50d96b6159f75ead341294dc05c419bba",
+    "score": 4.901960784313726,
+    "salt": "seed-demo-development-v1"
+  },
+  "confirmation": {
+    "receipt_sha256": "c3f4ea2dffd3e0c746adc10ff74ba609c03f435859ec1c5054f591218a5faa27",
+    "score": 4.761904761904762,
+    "salt": "seed-demo-final-v1"
+  },
+  "measured_improvement": {
+    "development_ratio": 4.901960784313726,
+    "confirmation_ratio": 4.761904761904762,
+    "comparison": "both salts must exceed the baseline; no favorable pick"
+  },
+  "provenance": [
+    "https://example.org/paper"
+  ],
+  "resource_accounting": {
+    "execution": {
+      "seconds": 0.20065387501381338,
+      "usd": 0.0,
+      "tool_calls": 0
+    },
+    "model": {
+      "seconds": 0.2097307079238817,
+      "usd": 0.04,
+      "tool_calls": 0
+    },
+    "queue": {
+      "seconds": 0.06971237389370799,
+      "usd": 0.0,
+      "tool_calls": 0
+    },
+    "search": {
+      "seconds": 0.0,
+      "usd": 0.0,
+      "tool_calls": 0
+    },
+    "tool": {
+      "seconds": 0.0,
+      "usd": 0.0,
+      "tool_calls": 11
+    }
+  },
+  "production_enabled": false,
+  "installed_into_campaign": false,
+  "created_utc": "2026-10-25T12:17:20.606965+00:00"
+}

@@ -1,0 +1,15 @@
+{
+  "competition": "autoresearch-seeder-offline-fixture",
+  "task": "seed_demo",
+  "shots_per_address": 4,
+  "development_salt": "seed-demo-development-v1",
+  "final_salt": "seed-demo-final-v1",
+  "generator_timeout_seconds": 20,
+  "verifier_timeout_seconds": 20,
+  "memory_gib": 1,
+  "max_submission_bytes": 1048576,
+  "reference_cost": 100.0,
+  "official_sha256": {},
+  "reference_cost_source": "Fixture constant; this is not a real benchmark",
+  "library_trial_status": "offline_test_fixture"
+}

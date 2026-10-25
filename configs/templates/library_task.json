@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "task_id": "new_task",
+  "description": "tasks/new_task/task.txt",
+  "seed": "tasks/new_task/init_program.py",
+  "protocol": "tasks/new_task/protocol.json",
+  "validation_entrypoint": "tasks/new_task/library_validate.py",
+  "receipt_adapter": "tasks/new_task/library_receipts.py",
+  "candidate_file": "artifact/program.py",
+  "objective": "Describe the exact fixed development objective",
+  "sandbox": "Implement and document this task's candidate isolation",
+  "runtime": "Specify the prepared task runtime",
+  "library_trial_status": "not_integrated"
+}

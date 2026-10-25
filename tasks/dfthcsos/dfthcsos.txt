@@ -1,0 +1,45 @@
+DFTHC-SOS (Google Verifiable Quantum Circuit Compilation — chemistry system FeMoCo76o113e)
+
+NOTE: This file is a reconstruction for this source distribution. The original
+task statement lived on the author's machine and was not part of the handoff
+transfer snapshot; it is rebuilt from tasks/dfthcsos/README.md and the complete
+official contract copied in tasks/dfthcsos/OFFICIAL_SCORING.md. The official
+verifier, data pins, scoring and limits are defined exclusively by the pinned
+official files; this text is orientation only and has no scoring authority.
+
+TASK SUMMARY
+
+Optimize the verified quantum compilation of the FeMoCo76o113e chemistry
+system. A candidate program receives one absolute output directory argument
+and must write `submission.npz` plus consecutively numbered `angle_k_0.kmb`
+... circuit files (or `.kmx`). Both numerical factorization and circuit
+optimization are permitted. Fixed symmetry shifts and every acceptance gate
+of the official verifier apply unchanged.
+
+OBJECTIVE (development)
+
+Maximize reference_cost / (lambda_eff * T_total * Q_total), the improvement
+ratio over the calibrated baseline; the baseline normalizes to reward 1.0.
+This is this task's own improvement ratio, not the Kaggle three-task
+leaderboard aggregate.
+
+CONTRACT HIGHLIGHTS
+
+- Runtime: `.dfthcsos-venv/bin/python`; numpy, scipy, kickmix and the
+  official dfthcsos modules import directly under `python -I`.
+- Generator: offline, credentials and network denied, only the output
+  directory writable, 600 seconds / 8 GiB process-tree limits.
+- Official verifier: unchanged, hash-pinned under
+  data/quantum-compilation/official/verifiers/dfthcsos, 3600 seconds / 8 GiB.
+- Full scoring: 64 shots at every address (254,464 verified address-shots for
+  the baseline R=65/B=60 grid). Smoke checks use 1 shot/address and never
+  supply a search reward.
+- ANGLE circuit qubit cap 128; modeled total resource qubits may exceed 128.
+- All heavy evaluations share work/runtime-locks/dqi-cpu.lock. Verification
+  has one exclusive heavy slot; diagnostics <=60 s and <=2 GiB share the two
+  quick slots.
+- Fresh-salt confirmation runs report no search reward.
+- Never modify the verifier, reference data, official shifts or scoring
+  formula. Never package a prebuilt circuit binary.
+
+See OFFICIAL_SCORING.md for the complete authoritative contract.

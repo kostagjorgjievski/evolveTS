@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "task_id": "dfthcsos",
+  "description": "tasks/dfthcsos/dfthcsos.txt",
+  "seed": "tasks/dfthcsos/init_program.py",
+  "protocol": "tasks/dfthcsos/protocol.json",
+  "validation_entrypoint": "tasks/dfthcsos/library_validate.py",
+  "receipt_adapter": "tasks/dfthcsos/library_receipts.py",
+  "candidate_file": "artifact/program.py",
+  "objective": "Maximize reference_cost / (lambda_eff * T_total * Q_total)",
+  "sandbox": "macOS offline candidate sandbox; unchanged official verifier and Kaggle input readers",
+  "runtime": ".dfthcsos-venv/bin/python",
+  "library_trial_status": "adapter_prepared_not_running"
+}

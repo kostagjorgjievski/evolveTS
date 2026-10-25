@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "task": "dfthcsos",
+  "provider": {
+    "name": "minimax",
+    "credential_file": ".credentials/minimax.env",
+    "requested_model": "MiniMax-M3.1-Flash[1m]",
+    "requested_effort": "medium"
+  },
+  "budgets": {
+    "model_session_seconds": 12000,
+    "job_wall_clock_seconds": 14400,
+    "max_total_cost_usd": 25.0,
+    "max_tool_calls": 600,
+    "max_web_searches": 40,
+    "max_provider_retries": 5,
+    "retry_wait_seconds": 300
+  },
+  "validation": {
+    "max_development_attempts": 6,
+    "development_salt_key": "development_salt",
+    "final_salt_key": "final_salt",
+    "improvement_margin": 0.0,
+    "conservative_comparison": "both_salts"
+  },
+  "research": {
+    "blocked_hosts": ["kaggle.com", "www.kaggle.com"],
+    "allow_network_fetch": true,
+    "max_sources": 200
+  },
+  "queue": {
+    "heavy_lock": "work/runtime-locks/dqi-cpu.lock"
+  },
+  "publishing": {
+    "library_snapshot": false
+  },
+  "production": {
+    "automatic_enable": false
+  },
+  "_comment": "DISABLED EXAMPLE. This example intentionally ships with enabled=false. A live start requires every budget above present and finite, an enabled=true config and a passing preflight. The blocked_hosts list preserves the existing saved Kaggle access restriction; blocked sources are recorded as needs_access, never bypassed. No known chemistry solution or improved public artifact is included, keeping a later blind evaluation possible."
+}

@@ -1,0 +1,24 @@
+{
+  "status": "rejected",
+  "reasons": [
+    "No PASSing confirmation validation receipt",
+    "Development and confirmation salts are not distinct recorded values",
+    "Frozen submission content differs between the two checks",
+    "Confirmation receipt rejected by task adapter: Full unchanged demo verification with metric preflight required"
+  ],
+  "utc": "2026-10-25T12:17:20.913192+00:00",
+  "evidence": {
+    "identity": {
+      "task_id": "seed_demo",
+      "manifest_sha256": "8067c4ab5b88adf103f98b7165baf1f4b5b561a176d5e8d5127429a41d7917d2",
+      "protocol_sha256": "c91e1b540f36ddd1c26d0315efc3907a6e6457293cebc1c87d7ded20c3068fd1",
+      "objective": "Minimize the verified demo cost; reward = reference_cost / verified cost (baseline normalizes to ~1)",
+      "seed_program_sha256": "faae6f100026fa214bb834c86a268412790b13ce77ce775b7db039114524e336"
+    },
+    "baseline": 1.0,
+    "scores": {
+      "development": 4.901960784313726,
+      "confirmation": 4.761904761904762
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "files": {
+    "LICENSE-STATUS.md": "217ea6ee729c655e34a0fb1e7ee5377f2e18412893ca504f76ae2575cbaf8c56",
+    "MANIFEST.json": "8e5bfd07483194fb299fa4bcc5f1dec3c197a253f7d476c18a411af37c058c57",
+    "SOURCES.json": "7197f8da73ca2416ec9c3584b549722508d2f2ac163f387a910877d062f4f347",
+    "confirmation.json": "a2631253ec79a382623a738f876ed0c881034a5b4f5bd50be7b95dd044296811",
+    "development.json": "ac0d86da1c41ec187dab24e680df7967c4a62ced4faab77f42dacd0e778fb6ce",
+    "GENERATION.md": "c34e207f95543d154156955a7baa8ed858d365dccba0a8057fef3cf3821605f7",
+    "diagnostic.py": "2db1bfa92f2a518a89ada75dc1e2db5773443c5b34e57a30dbd190a46553ead1",
+    "program.py": "c45f59f34c0daa06c98d62d901a080d263ed9f7938b1eea585e9a382b2a9d516",
+    "submission.npz": "89b8442efd21070fa82b68fdacef40e2c52a2eec2db74f9f2d0f7f1d0b2e5239"
+  },
+  "sealed_utc": "2026-10-25T12:17:20.607813+00:00"
+}

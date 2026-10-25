@@ -1,0 +1,25 @@
+DEMO FIXTURE TASK (offline, deterministic, not a real benchmark)
+
+This fixture exists so the AutoResearch seeder's orchestration, sandboxed
+diagnostics, receipt parsing and publishing gates can be exercised end to end
+without provider credentials, model sessions or the real chemistry data.
+It deliberately mirrors the DFTHC-SOS adapter contract (same library.json
+fields, same evaluator CLI, same receipt envelope, same freeze rules).
+
+A candidate program is invoked as `python -I program.py /absolute/output/dir`
+and must write one file `submission.npz` (plain text despite the name)
+containing submission lines:
+
+  BASE n    contributes n to the verified cost
+  TRICK n   contributes n * 0.5 (a cheaper mechanism)
+  JUNK      adds a 25 penalty (never useful)
+
+The trusted verifier computes cost = max(1, sum(contributions)) * salt_factor,
+where salt_factor depends deterministically on the verification salt, so the
+same frozen submission scores slightly differently under the development and
+confirmation salts. Full verification counts 4 shots per submission line.
+
+The official baseline program writes `BASE 100` and normalizes to reward ~1.
+Improvement requires a genuinely cheaper submission. A program that crashes,
+exceeds the generator timeout, or writes malformed lines FAILS verification —
+which is an experiment failure, never an infrastructure failure.

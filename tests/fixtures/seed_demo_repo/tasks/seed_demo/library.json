@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "task_id": "seed_demo",
+  "description": "tasks/seed_demo/task.txt",
+  "seed": "tasks/seed_demo/init_program.py",
+  "protocol": "tasks/seed_demo/protocol.json",
+  "validation_entrypoint": "tasks/seed_demo/library_validate.py",
+  "receipt_adapter": "tasks/seed_demo/library_receipts.py",
+  "candidate_file": "artifact/program.py",
+  "objective": "Minimize the verified demo cost; reward = reference_cost / verified cost (baseline normalizes to ~1)",
+  "sandbox": "Offline macOS sandbox-exec fixture with the same envelope as the chemistry task",
+  "runtime": "inherit",
+  "library_trial_status": "offline_test_fixture_not_a_real_task"
+}
