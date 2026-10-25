@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "provider": {
+    "backend": "hermes",
+    "name": "glm",
+    "credential_file": ".credentials/glm.env",
+    "requested_model": "glm-5.3",
+    "requested_effort": "medium",
+    "provider_name": "seeder_glm",
+    "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+    "key_env": "SEEDER_GLM_API_KEY",
+    "wire_transport": "anthropic_messages",
+    "hermes_pin": "v0.22.5"
+  },
+  "budgets": {
+    "session_seconds": 1200
+  },
+  "release_boundary": {
+    "level": 1,
+    "note": "Cross-branch scientific evidence becomes shareable only when the controller releases it AT this level boundary (research-release). Infrastructure corrections distribute immediately after controller review (research-review)."
+  },
+  "agenda": {
+    "default_budgets": {
+      "max_sessions": 6,
+      "max_model_seconds": 7200,
+      "max_usd": 5.0
+    },
+    "shelve": "budget exhaustion or repeated sessions with no new activity shelve an investigation; shelved items stay durable and resumable"
+  },
+  "_comment": "DISABLED EXAMPLE for the autonomous research agenda (Hermes backend by default; claude_code works identically). The agenda runs investigations that span sessions, with preserved checkpoints, finite budgets, and automatic shelving of unproductive lines. Agenda eligibility is a pure storage read — idle scheduling never costs model calls. Branch-private scientific results never cross branches before an explicit release at the level boundary; infrastructure corrections distribute only after controller review and physically cannot carry scientific fields. Research sessions never modify or inject findings into existing campaigns; the RSI attempt side consumes findings ONLY through the nonblocking research-check. All data lives under the research root (default <run-root>/autoresearch-seeder-research), which is machine-local and never committed."
+}

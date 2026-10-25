@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import ROOT
 from .models import ProviderRateLimit, ProviderRefused
 
 # Provider-failure classification mirrors scripts/run_bounded.py; a refusal is
@@ -148,8 +149,8 @@ class RealTransport:
         import asyncio
         import dataclasses
         import os
-        import claude_agent_sdk as sdk
-        from .backends import mcp_server_command
+        import claude_agent_sdk as sdk  # noqa: F401  (presence check below)
+        from .backends import load_environment, mcp_server_command
 
         env_config = load_environment(self.credential_file) \
             if self.credential_file.is_file() else {}

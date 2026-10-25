@@ -26,7 +26,10 @@
     "conservative_comparison": "both_salts"
   },
   "research": {
-    "blocked_hosts": ["kaggle.com", "www.kaggle.com"],
+    "blocked_hosts": [
+      "kaggle.com",
+      "www.kaggle.com"
+    ],
     "allow_network_fetch": true,
     "max_sources": 200
   },
@@ -39,5 +42,5 @@
   "production": {
     "automatic_enable": false
   },
-  "_comment": "COMPARISON ARM A (DISABLED — do not enable without operator approval). Claude Code researcher backend driving GLM-5.3 at requested medium effort through the Anthropic-compatible endpoint in .credentials/glm.env (machine-local, never committed). Development sessions are bounded to 1200s (20 minutes) of model-session time; official validation runs through the trusted task adapter outside that allowance. Identical budgets, frozen baseline, prepared context and MCP tools as arm B; the ONLY difference is provider.backend. No strong-model advisor in either arm. Comparison protocol: docs/autoresearch-seeder-comparison.md."
+  "_comment": "COMPARISON ARM A (DISABLED \u2014 do not enable without operator approval). Task is the FULL dfthcsos chemistry benchmark (the small chemistry lookup component named in the handoff does not exist in this repository; documented in the comparison doc). Claude Code researcher backend driving GLM-5.3 at requested medium effort through the Anthropic-compatible endpoint in .credentials/glm.env (machine-local, never committed). Development sessions are bounded to 1200s (20 minutes) of model-session time; official validation runs through the trusted task adapter outside that allowance. Identical budgets, frozen baseline, prepared context and MCP tools as arm B; the ONLY difference is provider.backend. No strong-model advisor in either arm. Comparison protocol: docs/autoresearch-seeder-comparison.md."
 }

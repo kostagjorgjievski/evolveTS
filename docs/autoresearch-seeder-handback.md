@@ -113,9 +113,100 @@ effort, budgets, tools) — both `enabled: false`, differing ONLY in
 self-reports), billing caveats, the fresh-session knowledge-preservation
 check, Mac Mini prerequisites and exact launch commands:
 [docs/autoresearch-seeder-comparison.md](autoresearch-seeder-comparison.md).
-The comparison task is the existing dfthcsos chemistry task itself (pinned
-inputs, offline library namespace, official verifier) — no new dependency
-was invented, and none is missing.
+The comparison task is the **full** `dfthcsos` chemistry benchmark: the
+handoff's "existing small chemistry lookup component" does NOT exist in this
+repository, and that missing dependency is documented rather than
+substituted (the offline `seed_demo` fixture is not chemistry and is never
+presented as such). Preflight enforces the Hermes release pin
+(`provider.hermes_pin`, default v0.22.5): a detected version mismatch fails
+the live preflight with both versions shown.
+
+## Phase 3 — Mac Mini acceptance findings + autonomous research layer
+
+### The three acceptance findings, fixed
+
+1. **Real MCP child startup failed on the Mini** (`mcp` unimportable in the
+   cleaned environment). Root cause: the child's PYTHONPATH was rebuilt from
+   the TEST RUNNER's site dirs, which describe a different interpreter than
+   the resolved server interpreter on that machine. Fix: the validation
+   probe now captures the validated interpreter's ACTUAL `sys.path`, and
+   `server_env` uses exactly that. New regression tests assert the invariant
+   directly: a child launched with `server_env` imports `mcp`, and
+   PYTHONPATH equals the interpreter's probed import paths.
+2. **Comparison configs called full dfthcsos the small lookup task.**
+   Corrected everywhere: dfthcsos is the FULL chemistry benchmark. The
+   handoff's "existing small chemistry lookup component" does NOT exist in
+   this repository (`tasks/dfthcsos/tools_server.py` is a broker over the
+   full official validator); the missing dependency is documented in
+   `docs/autoresearch-seeder-comparison.md` instead of substituted.
+3. **Hermes preflight now ENFORCES the pin.** The detected release is
+   parsed from `hermes --version`; anything other than the configured pin
+   (`provider.hermes_pin`, default v0.22.5) FAILS preflight with both
+   versions shown and the install command (`pipx install
+   hermes-agent==0.22.5`); unparseable output also fails. `run` refuses to
+   start on a failed preflight, so a mismatched runtime cannot reach a paid
+   session. Four new tests (match, mismatch, unparseable, deliberate config
+   override).
+4. **Caught by static check while fixing the above:** `RealTransport`
+   referenced two undefined names (`ROOT` in the constructor's default
+   path, `load_environment` in `run()`) — a live Claude-backend session
+   would have crashed with NameError before reaching the provider. Both
+   now resolve (lazy import where circularity forces it), with a
+   construction regression test.
+
+### Autonomous research layer (new; disabled by default)
+
+- **`knowledge.py`** — scoped knowledge base enforcing the three
+  information compartments (external / branch-private / released) plus
+  reviewed infrastructure corrections. Audiences are COMPUTED from
+  provenance: a package derived from branch A's private result stays
+  branch-A-scoped forever, even when a public paper later supports the same
+  mechanism (private-input tainting). Cross-branch separation lives in
+  storage and retrieval — `eligible_records(branch, level)` is the only
+  read path, and session prompts are built solely from what it returns.
+  Level-boundary releases append a level-public copy (original stays
+  private, both auditable). Infrastructure corrections cannot physically
+  carry scientific fields (schema-rejected at write time) and distribute
+  only after controller review. Direction assignments are metadata-only
+  (no field can hold outcomes). Finding handoffs carry all five required
+  sections; `diagnostic_supported` vs `verified_seed` are distinct output
+  classes and verified seeds must cite receipt IDs; delivery freezes a
+  hashed snapshot beside the attempt record (idempotent, auditable).
+  `check_findings` is nonblocking by construction: missing/corrupt base →
+  empty result, attempt proceeds.
+- **`investigations.py`** — the autonomous agenda: multi-session
+  investigations with preserved checkpoints, finite budgets, auto-shelving
+  (budget exhaustion or repeated no-new-activity sessions), `next_eligible`
+  as a pure storage read. Shared-scope prompts receive only
+  external/released/reviewed records; branch-scoped prompts additionally
+  receive that branch's own private history.
+- **Scheduler** — `schedule --research-config` (disabled example shipped).
+  Eligibility checks never construct a transport; when enabled and no job
+  is eligible, at most one bounded investigation session runs per pass;
+  jobs take priority over research.
+- **CLI** — `research-agenda / research-status / research-run /
+  research-release / research-review / research-check`.
+- **Acceptance tests** (`tests/test_seeder_knowledge.py`, 14) cover all
+  seven required proofs: own-parent inheritance; cross-branch
+  invisibility of records AND derived advice; invariance of branch B's
+  eligible set under branch A's private additions; level-boundary release
+  visibility; infrastructure distribution without science leakage;
+  nonblocking behavior on missing/corrupt bases; frozen+auditable
+  deliveries. `tests/test_seeder_investigations.py` (9) covers agenda
+  eligibility, budget/stale shelving, checkpoint persistence, scoped
+  prompts, session accounting, and the scheduler's idle research path.
+
+Nothing injects findings into existing campaigns; the RSI side consumes
+research ONLY through the nonblocking `research-check`. All research
+configurations ship disabled; research data lives under the machine-local
+run root.
+
+Phase 3 offline results (MacBook Air): `python3 -m pytest tests -q` →
+**106 passed, 1 skipped** (the skip remains the real-Hermes-CLI
+prerequisite; install the pinned release on the Mac Mini and it runs). The
+dfthcsos chemistry tests still pass where the official data exists (the
+Mini's real-chemistry self-test passed before this phase; this phase
+touched no task or scoring code — `tasks/` is unchanged).
 
 ## Changed / added files
 
@@ -124,7 +215,9 @@ was invented, and none is missing.
 `worker.py`, `controller.py`, `publisher.py`, `context.py`, `mcp_server.py`,
 `selftest.py`, `samples.py`, `testing.py`, `__main__.py`; phase 2 added
 `backends.py` (backend abstraction, validated MCP interpreter/env, Hermes
-backend) and `scheduler.py` (bounded, disabled-by-default).
+backend) and `scheduler.py` (bounded, disabled-by-default); phase 3 added
+`knowledge.py` (scoped knowledge base) and `investigations.py` (autonomous
+research agenda).
 
 **Phase 2 configuration and docs** — `configs/comparison/arm-a-claude-glm53.json`
 and `configs/comparison/arm-b-hermes-glm53.json` (both DISABLED);

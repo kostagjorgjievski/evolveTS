@@ -14,14 +14,38 @@ sys.path.insert(0, str(REPO))
 
 mcp_client = pytest.importorskip('mcp.client.session')
 
-from scripts.autoresearch_seeder.backends import mcp_server_command, \
-    resolve_interpreter, server_env
+from scripts.autoresearch_seeder.backends import interpreter_sys_path, \
+    mcp_server_command, resolve_interpreter, server_env
 from scripts.autoresearch_seeder.testing import GOOD_DIAGNOSTIC, build_job
 
 
 def test_interpreter_resolves_and_imports_mcp():
     interpreter = resolve_interpreter(REPO)
     assert interpreter.is_file()
+
+
+def test_server_env_child_actually_imports_mcp():
+    """The exact environment the MCP server child receives must import mcp.
+
+    Regression for machines where the test runner's site dirs differ from
+    the resolved server interpreter's import paths: PYTHONPATH comes from
+    the validated interpreter's probed sys.path, not from this process.
+    """
+    import subprocess
+    probe = subprocess.run(
+        [str(resolve_interpreter(REPO)), '-c',
+         'import mcp; from mcp.server.stdio import stdio_server'],
+        capture_output=True, text=True, timeout=120, env=server_env(REPO))
+    assert probe.returncode == 0, probe.stderr[-2000:]
+
+
+def test_server_env_pythonpath_is_the_interpreters_own_sys_path():
+    import os as _os
+    environment = server_env(REPO)
+    expected = [directory for directory in interpreter_sys_path(REPO)
+                if Path(directory).is_dir()]
+    assert environment['PYTHONPATH'].split(_os.pathsep) == expected
+    assert environment['HOME'] == '/nonexistent'   # isolation preserved
 
 
 def test_mcp_command_uses_validated_interpreter(tmp_path):

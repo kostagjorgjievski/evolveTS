@@ -269,13 +269,154 @@ def cmd_sample_export(args):
     return 0
 
 
+def _load_research_config(path):
+    """Research agenda configs are their own schema (not job configs)."""
+    config = json.loads(Path(path).read_text())
+    if not isinstance(config, dict):
+        raise SystemExit('Research config must be a JSON object')
+    if 'provider' not in config or 'budgets' not in config:
+        raise SystemExit('Research config requires provider and budgets '
+                         'sections (see configs/hermes_research.example.json)')
+    return config
+
+
 def cmd_schedule(args):
     from .scheduler import schedule
+    research = None
+    if args.research_config:
+        research_config = _load_research_config(args.research_config)
+        research_root = args.research_root or str(
+            Path(args.run_root) / 'autoresearch-seeder-research')
+        workspace = Path(research_root) / 'agenda-workspace'
+        research = {'enabled': bool(research_config.get('enabled')),
+                    'root': research_root,
+                    'level': int((research_config.get('release_boundary')
+                                  or {}).get('level', 0)),
+                    'provider': research_config.get('provider', {}),
+                    'budgets': research_config.get('budgets', {}),
+                    'transport_factory': _transport_factory_for(
+                        argparse.Namespace(job=str(workspace)))}
     outcomes = schedule(args.run_root, loop_passes=args.loop_passes,
-                        sleep_seconds=args.sleep_seconds)
+                        sleep_seconds=args.sleep_seconds, research=research)
     print(json.dumps({'bounded': True, 'outcomes': outcomes,
                       'passes': len(outcomes)}, indent=2))
     return 0
+
+
+# -- autonomous research (knowledge base / agenda) ----------------------------
+
+
+def _research_base(args):
+    from .knowledge import KnowledgeBase
+    root = Path(args.root)
+    return KnowledgeBase(root / 'knowledge.sqlite')
+
+
+def _investigations(args):
+    from .investigations import Investigations
+    return Investigations(Path(args.root) / 'investigations.sqlite')
+
+
+def cmd_research_agenda(args):
+    agenda = _investigations(args)
+    try:
+        if args.add:
+            record = agenda.create(args.add, branch=args.branch,
+                                   level=args.level, priority=args.priority,
+                                   origin='branch_request' if args.branch
+                                   else 'agenda',
+                                   budgets=json.loads(args.budgets)
+                                   if args.budgets else None)
+            print(json.dumps(record, indent=2))
+            return 0
+        print(json.dumps(agenda.list(), indent=2))
+        return 0
+    finally:
+        agenda.close()
+
+
+def cmd_research_status(args):
+    agenda = _investigations(args)
+    base = _research_base(args)
+    try:
+        print(json.dumps({
+            'investigations': agenda.list(),
+            'records': [base.get(record[0]) for record in base.db.execute(
+                'SELECT id FROM records ORDER BY created_utc')],
+            'deliveries': base.deliveries(),
+            'direction_assignments': base.direction_assignments(),
+        }, indent=2, default=str))
+        return 0
+    finally:
+        agenda.close()
+        base.close()
+
+
+def cmd_research_release(args):
+    base = _research_base(args)
+    try:
+        released = base.release(args.record, at_level=args.at_level)
+        base.db.commit()
+        print(json.dumps({'released': released['id'],
+                          'at_level': args.at_level}, indent=2))
+        return 0
+    finally:
+        base.close()
+
+
+def cmd_research_review(args):
+    base = _research_base(args)
+    try:
+        reviewed = base.review_infrastructure(args.record, reviewer=args.reviewer)
+        print(json.dumps({'reviewed': reviewed['id'],
+                          'status': reviewed['status']}, indent=2))
+        return 0
+    finally:
+        base.close()
+
+
+def cmd_research_check(args):
+    from .knowledge import check_findings
+    parent = json.loads(Path(args.parent_json).read_text()) \
+        if args.parent_json else {}
+    outcome = check_findings(args.root, args.branch, args.level, parent=parent,
+                             attempt_record=args.attempt_record)
+    print(json.dumps(outcome, indent=2))
+    return 0
+
+
+def cmd_research_run(args):
+    from .investigations import run_investigation_session
+    research_config = _load_research_config(args.config)
+    if not research_config.get('enabled'):
+        raise SystemExit('Research config is disabled; a live investigation '
+                         'session requires enabled=true.')
+    agenda = _investigations(args)
+    base = _research_base(args)
+    try:
+        investigation = agenda.next_eligible()
+        if investigation is None:
+            print(json.dumps({'started': None,
+                              'reason': 'no eligible investigation'}, indent=2))
+            return 0
+        workspace = Path(args.root) / 'agenda-workspace'
+        (workspace / 'worker').mkdir(parents=True, exist_ok=True)
+        factory = _transport_factory_for(
+            argparse.Namespace(job=str(workspace)))
+        transport = factory(research_config)
+        updated = run_investigation_session(
+            agenda, investigation['id'], transport, base,
+            budget_seconds=float((research_config.get('budgets') or {})
+                                 .get('session_seconds', 1200.0)))
+        print(json.dumps({'investigation': investigation['id'],
+                          'status': updated['status'],
+                          'consumed': updated['consumed'],
+                          'shelve_reason': updated.get('shelve_reason', '')},
+                         indent=2))
+        return 0
+    finally:
+        agenda.close()
+        base.close()
 
 
 SCHEDULER_NOTICE = (
@@ -343,7 +484,66 @@ def main(argv=None):
                           help='Maximum passes (default 1; stops early when idle)')
     schedule.add_argument('--sleep-seconds', type=float, default=300.0,
                           help='Sleep between passes when work remains')
+    schedule.add_argument('--research-config', default=None,
+                          help='Optional research agenda config (disabled '
+                               'example: configs/hermes_research.example.json);'
+                               ' agenda eligibility never costs model calls')
+    schedule.add_argument('--research-root', default=None,
+                          help='Knowledge/investigation root (default '
+                               '<run-root>/autoresearch-seeder-research)')
     schedule.set_defaults(func=cmd_schedule)
+
+    agenda = sub.add_parser('research-agenda',
+                            help='List investigations or add one (--add TOPIC)')
+    agenda.add_argument('--root', required=True)
+    agenda.add_argument('--add', default=None, help='Topic to add')
+    agenda.add_argument('--branch', default=None,
+                        help='Branch scope (omit for shared external context)')
+    agenda.add_argument('--level', type=int, default=0)
+    agenda.add_argument('--priority', type=int, default=0)
+    agenda.add_argument('--budgets', default=None, help='JSON budget overrides')
+    agenda.set_defaults(func=cmd_research_agenda)
+
+    status = sub.add_parser('research-status',
+                            help='Investigations, records, deliveries, assignments')
+    status.add_argument('--root', required=True)
+    status.set_defaults(func=cmd_research_status)
+
+    release = sub.add_parser('research-release',
+                             help='Controller: release a private record at a '
+                                  'level boundary')
+    release.add_argument('--root', required=True)
+    release.add_argument('--record', required=True)
+    release.add_argument('--at-level', type=int, required=True)
+    release.set_defaults(func=cmd_research_release)
+
+    review = sub.add_parser('research-review',
+                            help='Controller: approve an infrastructure '
+                                 'correction for distribution')
+    review.add_argument('--root', required=True)
+    review.add_argument('--record', required=True)
+    review.add_argument('--reviewer', required=True)
+    review.set_defaults(func=cmd_research_review)
+
+    check = sub.add_parser('research-check',
+                           help='Nonblocking attempt-boundary findings check')
+    check.add_argument('--root', required=True)
+    check.add_argument('--branch', required=True)
+    check.add_argument('--level', type=int, default=0)
+    check.add_argument('--parent-json', default=None,
+                       help='Parent context JSON (code hash, task, score, '
+                            'open questions)')
+    check.add_argument('--attempt-record', default=None,
+                       help='Attempt record path; selected findings are '
+                            'frozen next to it')
+    check.set_defaults(func=cmd_research_check)
+
+    research_run = sub.add_parser('research-run',
+                                  help='Run ONE investigation session '
+                                       '(requires enabled research config)')
+    research_run.add_argument('--root', required=True)
+    research_run.add_argument('--config', required=True)
+    research_run.set_defaults(func=cmd_research_run)
 
     args = parser.parse_args(argv)
     return args.func(args)

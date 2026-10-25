@@ -12,10 +12,9 @@ tools — Claude Code (arm A) vs Hermes Agent (arm B).
 
 Both arms share, by construction of the seeder:
 
-- Same task: `dfthcsos` (the existing small chemistry-lookup task — pinned
-  official inputs, offline library namespace, unchanged official verifier;
-  see `tasks/dfthcsos/README.md`. No new dependency was invented for the
-  comparison).
+- Same task: `dfthcsos` — the **full** chemistry benchmark task (Google
+  verifiable quantum circuit compilation; pinned official inputs, official
+  unchanged verifier; see `tasks/dfthcsos/README.md`).
 - Same frozen starting artifact (`init` copies the official seed program).
 - Same neutral prepared context (`scripts/autoresearch_seeder/context.py` is
   backend-independent; the worker prompt template is identical).
@@ -26,6 +25,20 @@ Both arms share, by construction of the seeder:
   identical tool/search/retry caps, 25 USD SDK-reported cost ceiling.
 - Same GLM-5.3 endpoint (`.credentials/glm.env`, machine-local) and requested
   effort `medium`.
+
+### Missing dependency, stated plainly
+
+The handoff called for comparison task cases built on an "existing small
+chemistry lookup component". **No such component exists in this
+repository.** The only chemistry substrate is the full `dfthcsos` benchmark
+(`tasks/dfthcsos/tools_server.py` is a task-scoped MCP broker over the FULL
+official validator, not a small lookup). Therefore, as configured, the
+comparison runs the full benchmark task: heavier per validation than
+intended, and the small-lookup dependency is DOCUMENTED MISSING rather than
+substituted — the offline `seed_demo` fixture is a test fixture and must not
+be presented as chemistry validation. If a genuine small chemistry lookup
+component is later provided, point both arm configs' `task` at a task
+adapter wrapping it; nothing else in the protocol changes.
 
 The ONLY difference is `provider.backend`: `claude_code` (arm A) vs `hermes`
 (arm B, pinned release v0.22.5, commit bf0203a, docs verified 2026-10-25).
@@ -103,9 +116,11 @@ git switch implementation/autoresearch-seeder && git pull --ff-only
 # 2. Python deps for the seeder MCP server (already present on the Mac Mini):
 python3 -c "import mcp, claude_agent_sdk" && echo deps-ok
 
-# 3. Hermes CLI for arm B (skip if `command -v hermes` already finds it):
-command -v hermes || pipx install hermes-agent
-hermes --version   # record the exact version; backend pins v0.22.5
+# 3. Hermes CLI for arm B — the PINNED release is enforced by preflight:
+command -v hermes || pipx install hermes-agent==0.22.5
+hermes --version   # must report 0.22.5; a different release FAILS preflight
+                   # (override only deliberately, after re-verifying docs,
+                   #  via provider.hermes_pin in the arm config)
 
 # 4. GLM credentials (machine-local, never committed):
 test -s .credentials/glm.env && echo glm-credentials-present

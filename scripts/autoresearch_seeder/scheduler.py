@@ -76,17 +76,23 @@ def eligible_jobs(run_root, now=None) -> list:
 
 
 def run_once(run_root, now=None, transport_factory=None,
-             search_service=None, fetcher=None) -> dict:
+             search_service=None, fetcher=None, research=None) -> dict:
     """Start the single oldest eligible job; returns what happened.
 
     Duplicate starts are impossible: the controller's lease claim rejects a
     second owner while one is live, and JobBusy is reported as a skip, not an
-    error, so a concurrent scheduler pass stays bounded. The injection
-    parameters exist for deterministic tests; production passes none.
+    error, so a concurrent scheduler pass stays bounded. When no seeder job
+    is eligible and a research agenda is enabled, one investigation session
+    may run instead — the eligibility checks themselves stay pure storage
+    reads either way. The injection parameters exist for deterministic tests;
+    production passes none.
     """
     from .__main__ import _load_controller, _transport_factory_for
     candidates = eligible_jobs(run_root, now=now)
     if not candidates:
+        outcome = _maybe_research_session(research)
+        if outcome is not None:
+            return outcome
         return {'started': None, 'eligible': 0,
                 'reason': 'no eligible work (idle check made no model calls)'}
     entry = candidates[0]
@@ -114,8 +120,38 @@ def run_once(run_root, now=None, transport_factory=None,
     return outcome
 
 
+def _maybe_research_session(research) -> dict:
+    """Idle research path: agenda consulted first (no model calls), then at
+    most one bounded investigation session. Returns None when research is
+    disabled or nothing is eligible, so the plain idle outcome stands."""
+    if not (research or {}).get('enabled'):
+        return None
+    from .investigations import Investigations, run_investigation_session
+    from .knowledge import KnowledgeBase
+    root = Path(research['root'])
+    investigations = Investigations(root / 'investigations.sqlite')
+    knowledge = KnowledgeBase(root / 'knowledge.sqlite')
+    try:
+        investigation = investigations.next_eligible()
+        if investigation is None:
+            return None   # agenda empty/spent: plain idle outcome
+        session_budget = float((research.get('budgets') or {})
+                               .get('session_seconds', 1200.0))
+        transport = research['transport_factory'](research.get('provider', {}))
+        updated = run_investigation_session(
+            investigations, investigation['id'], transport, knowledge,
+            budget_seconds=session_budget)
+        return {'started': None, 'eligible': 0,
+                'investigation_session': investigation['id'],
+                'investigation_status': updated['status'],
+                'reason': 'no eligible job; ran one investigation session'}
+    finally:
+        investigations.close()
+        knowledge.close()
+
+
 def schedule(run_root, *, loop_passes: int = 1, sleep_seconds: float = 300.0,
-             now=None) -> list:
+             now=None, research=None) -> list:
     """Bounded scheduling: at most `loop_passes` passes, stop when idle.
 
     Each pass starts at most one job. The loop exits early when a pass finds
@@ -124,7 +160,7 @@ def schedule(run_root, *, loop_passes: int = 1, sleep_seconds: float = 300.0,
     """
     outcomes = []
     for index in range(max(1, int(loop_passes))):
-        outcome = run_once(run_root, now=now)
+        outcome = run_once(run_root, now=now, research=research)
         outcomes.append(outcome)
         if not outcome.get('started') and not outcome.get('skipped_busy'):
             break   # no eligible work: stop instead of spinning

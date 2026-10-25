@@ -31,7 +31,10 @@
     "conservative_comparison": "both_salts"
   },
   "research": {
-    "blocked_hosts": ["kaggle.com", "www.kaggle.com"],
+    "blocked_hosts": [
+      "kaggle.com",
+      "www.kaggle.com"
+    ],
     "allow_network_fetch": true,
     "max_sources": 200
   },
@@ -44,5 +47,5 @@
   "production": {
     "automatic_enable": false
   },
-  "_comment": "COMPARISON ARM B (DISABLED — do not enable without operator approval). Hermes Agent researcher backend (Nous Research, pinned release v0.22.5, commit bf0203a; docs hermes-agent.nousresearch.com verified 2026-10-25) driving the SAME GLM-5.3 endpoint and requested medium effort as arm A, via a named custom provider with the anthropic_messages transport. Per-job isolated HERMES_HOME; the seeder MCP tools are the only research tools. Development sessions bounded to 1200s (20 minutes); official validation outside that allowance. Identical budgets, frozen baseline, prepared context and tools as arm A; the ONLY difference is provider.backend. Requires the Hermes CLI on the evaluation machine (e.g. pipx install hermes-agent). Comparison protocol: docs/autoresearch-seeder-comparison.md."
+  "_comment": "COMPARISON ARM B (DISABLED \u2014 do not enable without operator approval). Task is the FULL dfthcsos chemistry benchmark (the small chemistry lookup component named in the handoff does not exist in this repository). Hermes release pin is ENFORCED by preflight: hermes_pin v0.22.5; a mismatching installed version fails preflight. Hermes Agent researcher backend (Nous Research, pinned release v0.22.5, commit bf0203a; docs hermes-agent.nousresearch.com verified 2026-10-25) driving the SAME GLM-5.3 endpoint and requested medium effort as arm A, via a named custom provider with the anthropic_messages transport. Per-job isolated HERMES_HOME; the seeder MCP tools are the only research tools. Development sessions bounded to 1200s (20 minutes); official validation outside that allowance. Identical budgets, frozen baseline, prepared context and tools as arm A; the ONLY difference is provider.backend. Requires the Hermes CLI on the evaluation machine (e.g. pipx install hermes-agent). Comparison protocol: docs/autoresearch-seeder-comparison.md."
 }

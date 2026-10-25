@@ -32,7 +32,9 @@ All new code lives in `scripts/autoresearch_seeder/`:
 | `backends.py` | Backend abstraction (`Backend`, `session_metadata`), validated MCP-server interpreter/env, and the optional `HermesBackend` (Hermes Agent CLI) |
 | `worker.py` | One research session: prepared context -> batched tool loop -> accounted outcome |
 | `controller.py` | Durable job state, atomic leases, budget enforcement, stage machine, recovery |
-| `scheduler.py` | Bounded, disabled-by-default single-pass scheduler over eligible queued jobs |
+| `knowledge.py` | Scoped research knowledge base: provenance/taint-enforced audiences, level-boundary releases, reviewed infrastructure corrections, frozen+auditable finding handoffs, nonblocking `check_findings` |
+| `investigations.py` | Autonomous research agenda: multi-session investigations, checkpoints, finite budgets, auto-shelving, scoped session prompts |
+| `scheduler.py` | Bounded, disabled-by-default single-pass scheduler over eligible queued jobs (and, when enabled, the idle research agenda) |
 | `publisher.py` | Machine-checkable acceptance gates and immutable seed export |
 | `context.py` | Prepared-context construction for fresh conversations |
 | `mcp_server.py` | stdio MCP shim exposing the dispatcher to a live model session |
@@ -171,6 +173,66 @@ construction immediately. `preflight --live` runs the selected backend's own
 checks (credential presence, CLI presence/version, isolated home generation,
 MCP interpreter) in addition to the task-level checks.
 
+## Autonomous research layer (knowledge + agenda)
+
+Optional, disabled by default (`configs/hermes_research.example.json`). Two
+durable stores under a machine-local research root (default
+`<run-root>/autoresearch-seeder-research/`, never committed):
+
+**Scoped knowledge base** (`knowledge.py`) — every research record carries a
+COMPUTED audience, never a caller-claimed one:
+
+- `external` (public sources): everyone at/above its level.
+- `branch_private`: one RSI branch only — code, discoveries, failed
+  hypotheses, scores, summaries. A branch receives its own history
+  immediately (including failed experiments and next actions); other
+  branches cannot retrieve it, before or after release of derived work.
+- `package` (finding/handoff): audience = intersection of its input
+  audiences PLUS its authoring branch — any private input taints it to that
+  branch FOREVER, even when public sources later support the same mechanism.
+- `released`: the controller promotes private records/findings at an
+  explicit level/dreaming boundary (`research-release`); the release is a
+  new level-public record, the original stays private, both stay auditable.
+- `infrastructure`: confirmed faults and neutral API corrections;
+  distributable only after controller review (`research-review`), and the
+  payload schema physically cannot carry scores, methods, evidence or
+  receipts, so distribution cannot leak science.
+
+Cross-branch separation is enforced in storage and retrieval
+(`eligible_records`), not by prompts: a session's prompt is built ONLY from
+records its scope may see. Direction assignments (`assign_direction`)
+distribute externally-sourced directions as metadata only — the schema has
+nowhere to put outcomes — reducing accidental duplication without steering
+branches away from methods via another branch's private failures.
+
+**Finding handoffs** — a ready finding states mechanism+sources,
+compatibility with the target parent (code hash/task lineage), evidence
+level + receipt IDs (`diagnostic_supported` vs `verified_seed` are different
+output classes; verified seeds MUST cite receipts), opportunity/uncertainty/
+risks, and the cheapest useful first experiment. Delivery
+(`check_findings`/`deliver`) freezes a snapshot beside the attempt record
+with a content hash; re-delivery is idempotent; every delivery is auditable.
+
+**Nonblocking attempt check** — `research-check --branch B --level N
+--parent-json ... [--attempt-record ...]` returns immediately: ready
+compatible findings (frozen into the attempt record if given), or an empty
+result — never a wait, never an error (a missing/corrupt knowledge base
+yields `blocked: false, findings: []`). The worker may reject delivered
+advice; nothing auto-injects findings into campaigns.
+
+**Investigation agenda** (`investigations.py`) — autonomous, multi-session
+research items with preserved checkpoints, finite budgets
+(sessions/model-seconds/USD) and automatic shelving (budget exhaustion or
+repeated sessions with no new activity; shelved items stay durable and
+resumable). `next_eligible` is a pure storage read — idle scheduling never
+costs model calls. When `schedule --research-config` is enabled and no
+seeder job is eligible, at most ONE bounded investigation session runs per
+pass; jobs always take priority over research.
+
+CLI: `research-agenda` (list/`--add`), `research-status`, `research-run`
+(one session; requires an ENABLED research config), `research-release`,
+`research-review`, `research-check`.
+
 ## Filesystem and CLI
 
 Jobs live at `runs/autoresearch-seeder/<task>/<job-id>/` with `sources/`,
@@ -187,6 +249,14 @@ python -m scripts.autoresearch_seeder export --job <path>
 python -m scripts.autoresearch_seeder selftest [--fixture | --task dfthcsos]
 python -m scripts.autoresearch_seeder sample-export --output docs/autoresearch-seeder/samples
 python -m scripts.autoresearch_seeder schedule [--run-root runs] [--loop-passes N] [--sleep-seconds S]
+                                             [--research-config configs/hermes_research.example.json]
+python -m scripts.autoresearch_seeder research-agenda --root <research-root> [--add TOPIC --branch B]
+python -m scripts.autoresearch_seeder research-status  --root <research-root>
+python -m scripts.autoresearch_seeder research-run     --root <research-root> --config <research config>
+python -m scripts.autoresearch_seeder research-release --root <research-root> --record ID --at-level N
+python -m scripts.autoresearch_seeder research-review  --root <research-root> --record ID --reviewer NAME
+python -m scripts.autoresearch_seeder research-check   --root <research-root> --branch B --level N
+                                                      [--parent-json parent.json --attempt-record record.json]
 ```
 
 `schedule` is the bounded scheduler: a single pass scans

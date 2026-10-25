@@ -171,6 +171,24 @@ def test_metadata_records_pin_and_requested_vs_served(tmp_path):
     assert TOKEN not in json.dumps(metadata)
 
 
+def test_real_transport_constructs_and_resolves_lazy_imports(tmp_path):
+    """Regression: RealTransport used undefined ROOT/load_environment names.
+
+    Its run() path imports both lazily (backends imports transport at module
+    level, so a top-level import would be circular); this pins that the
+    names actually resolve and the default app root is the package root.
+    """
+    from scripts.autoresearch_seeder import ROOT as package_root
+    from scripts.autoresearch_seeder.backends import load_environment
+    credential = make_credential(tmp_path)
+    job = tmp_path / 'job'; job.mkdir()
+    transport = RealTransport(
+        {'credential_file': str(credential), 'requested_model': 'glm-5.3'}, job)
+    assert transport.app_root == Path(package_root)
+    assert load_environment(credential)['ANTHROPIC_AUTH_TOKEN'] == TOKEN
+    assert transport.metadata()['requested_model'] == 'glm-5.3'
+
+
 # ---------------------------------------------------------------------------
 # Backend selection factory
 # ---------------------------------------------------------------------------
@@ -297,6 +315,64 @@ def test_fake_hermes_error_output_is_classified(tmp_path):
     binary.write_text('#!/bin/sh\necho "boom" >&2\nexit 3\n')
     with pytest.raises(RuntimeError, match='exit code 3'):
         backend.run('prompt', [], job / 'worker', {'session_seconds': 10})
+
+
+# ---------------------------------------------------------------------------
+# Version-pin enforcement — the detected release must match the configured pin
+# ---------------------------------------------------------------------------
+
+def install_version_hermes(tmp_path, version_output):
+    return install_fake_hermes(
+        tmp_path, f'#!/bin/sh\necho "{version_output}"\nexit 0\n')
+
+
+def version_checks(backend):
+    return [check for check in backend.preflight()
+            if 'version' in check['check'].lower()]
+
+
+def test_preflight_accepts_matching_pinned_version(tmp_path):
+    binary = install_version_hermes(tmp_path, 'hermes-client-v0.22.5')
+    job = tmp_path / 'job'; job.mkdir()
+    backend = make_backend(job, make_credential(tmp_path), hermes_bin=str(binary))
+    checks = version_checks(backend)
+    assert checks and all(check['ok'] for check in checks), checks
+    assert any('matches pinned release' in check.get('detail', '')
+               for check in checks)
+
+
+def test_preflight_rejects_version_mismatch(tmp_path):
+    binary = install_version_hermes(tmp_path, 'hermes-client-v0.21.0')
+    job = tmp_path / 'job'; job.mkdir()
+    backend = make_backend(job, make_credential(tmp_path), hermes_bin=str(binary))
+    checks = version_checks(backend)
+    failed = [check for check in checks if not check['ok']]
+    assert failed, 'a version mismatch must fail preflight'
+    detail = failed[0]['detail']
+    assert '0.21.0' in detail and '0.22.5' in detail
+    assert 'pipx install hermes-agent==0.22.5' in detail
+
+
+def test_preflight_rejects_unparseable_version(tmp_path):
+    binary = install_version_hermes(tmp_path, 'hermes, no version string here')
+    job = tmp_path / 'job'; job.mkdir()
+    backend = make_backend(job, make_credential(tmp_path), hermes_bin=str(binary))
+    checks = version_checks(backend)
+    failed = [check for check in checks if not check['ok']]
+    assert failed and 'could not parse' in failed[0]['detail']
+
+
+def test_config_override_of_pinned_release(tmp_path):
+    binary = install_version_hermes(tmp_path, 'hermes-client-v0.21.0')
+    job = tmp_path / 'job'; job.mkdir()
+    backend = make_backend(job, make_credential(tmp_path),
+                           hermes_bin=str(binary), hermes_pin='v0.21.0')
+    checks = version_checks(backend)
+    assert checks and all(check['ok'] for check in checks), checks
+    assert backend.pinned_release() == 'v0.21.0'
+    metadata = backend.metadata()
+    assert metadata['hermes_pin_enforced'] == 'v0.21.0'
+    assert metadata['hermes_reported_release'] == '0.21.0'
 
 
 # ---------------------------------------------------------------------------

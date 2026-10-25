@@ -18,7 +18,9 @@ from . import ROOT
 from .models import ProviderRateLimit, ToolInfrastructureError
 from .transport import TransportResult, classify_provider_error
 
-MCP_IMPORT_PROBE = 'import mcp; from mcp.server.stdio import stdio_server'
+INTERPRETER_PROBE = (
+    'import sys, json; import mcp; from mcp.server.stdio import stdio_server; '
+    'print(json.dumps([path for path in sys.path if path]))')
 
 _INTERPRETER_CACHE = {}
 
@@ -42,18 +44,26 @@ def resolve_interpreter(app_root=None) -> Path:
     for candidate in candidates:
         key = str(candidate)
         if key in _INTERPRETER_CACHE:
-            if _INTERPRETER_CACHE[key]:
+            if _INTERPRETER_CACHE[key]['ok']:
                 return candidate
             continue
         try:
             probe = subprocess.run(
-                [str(candidate), '-c', MCP_IMPORT_PROBE],
-                capture_output=True, timeout=60,
+                [str(candidate), '-c', INTERPRETER_PROBE],
+                capture_output=True, timeout=60, text=True,
                 env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
             ok = probe.returncode == 0
+            sys_path = []
+            if ok:
+                try:
+                    sys_path = json.loads(probe.stdout.strip().splitlines()[-1])
+                    ok = isinstance(sys_path, list)
+                except (ValueError, IndexError):
+                    ok = False
         except (subprocess.SubprocessError, OSError):
             ok = False
-        _INTERPRETER_CACHE[key] = ok
+            sys_path = []
+        _INTERPRETER_CACHE[key] = {'ok': bool(ok), 'sys_path': sys_path or []}
         if ok:
             return candidate
     raise ToolInfrastructureError(
@@ -64,19 +74,31 @@ def resolve_interpreter(app_root=None) -> Path:
           'one of them.')
 
 
+def interpreter_sys_path(app_root=None) -> list:
+    """The import paths the validated interpreter actually resolves `mcp` by.
+
+    Captured during the validation probe — NOT reconstructed from this
+    process's site module, which describes a different interpreter on
+    machines where the test runner and the resolved server interpreter
+    differ. This is exactly what the MCP server child needs to import `mcp`
+    under a scrubbed HOME.
+    """
+    interpreter = resolve_interpreter(app_root)
+    return list(_INTERPRETER_CACHE[str(interpreter)]['sys_path'])
+
+
 def server_env(app_root=None) -> dict:
     """Clean child environment that still resolves the interpreter's packages.
 
-    HOME is scrubbed so nothing user-local leaks into the server process, and
-    the needed site-package directories are passed explicitly via PYTHONPATH
-    (user-site resolution would otherwise follow the scrubbed HOME).
+    HOME is scrubbed so nothing user-local leaks into the server process;
+    package resolution survives because PYTHONPATH carries the validated
+    interpreter's own import paths (explicit entries bypass user-site
+    resolution that would otherwise follow the scrubbed HOME).
     """
-    import site
     directories = []
-    for directory in (getattr(site, 'getusersitepackages', lambda: None)(),
-                      getattr(site, 'getpurelib', lambda: None)()):
-        if directory and Path(directory).is_dir() and directory not in directories:
-            directories.append(str(directory))
+    for directory in interpreter_sys_path(app_root):
+        if directory and directory not in directories and Path(directory).is_dir():
+            directories.append(directory)
     return {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent',
             'PYTHONDONTWRITEBYTECODE': '1',
             'PYTHONPATH': os.pathsep.join(directories)}
@@ -311,10 +333,28 @@ class HermesBackend(Backend):
             raise ToolInfrastructureError(
                 'Hermes CLI not found. The optional Hermes backend requires the '
                 'Hermes Agent CLI (Nous Research, pinned release '
-                + HERMES_PIN['release'] + ') on PATH or set provider.hermes_bin. '
+                + self.pinned_release() + ') on PATH or set provider.hermes_bin. '
                 'Install it on the evaluation machine; this is a prerequisite, '
                 'not something the seeder installs.')
         return resolved
+
+    def pinned_release(self) -> str:
+        """The release this deployment is verified against (config overridable)."""
+        return str(self.provider.get('hermes_pin') or HERMES_PIN['release'])
+
+    @staticmethod
+    def _version_token(text) -> str:
+        """Extract the release number from `hermes --version` output.
+
+        Prefers a v-prefixed token (e.g. `hermes-client-v0.22.5`), then any
+        bare numeric release; returns '' when nothing parseable is present.
+        """
+        import re
+        v_prefixed = re.findall(r'v(\d+\.\d+(?:\.\d+)?)', text or '')
+        if v_prefixed:
+            return v_prefixed[-1]
+        bare = re.findall(r'\b(\d+\.\d+(?:\.\d+)?)\b', text or '')
+        return bare[-1] if bare else ''
 
     def probe_version(self) -> str:
         binary = self.resolve_binary()
@@ -351,11 +391,31 @@ class HermesBackend(Backend):
             checks.append({'check': f'Hermes CLI present ({binary})', 'ok': True})
             try:
                 version = self.probe_version()
-                checks.append({'check': f'Hermes CLI version ({version})',
-                               'ok': True,
-                               'detail': f'backend written against pinned release '
-                                         f'{HERMES_PIN["release"]} '
-                                         f'(docs {HERMES_PIN["docs_verified"]})'})
+                found = self._version_token(version)
+                pinned = self._version_token(self.pinned_release()) \
+                    or self.pinned_release().lstrip('v')
+                if not found:
+                    checks.append({
+                        'check': f'Hermes version matches pinned release '
+                                 f'({self.pinned_release()})', 'ok': False,
+                        'detail': f'could not parse a version from '
+                                  f'`--version` output: {version[:120]!r}'})
+                elif found == pinned:
+                    checks.append({'check': f'Hermes CLI version ({version})',
+                                   'ok': True,
+                                   'detail': f'matches pinned release '
+                                             f'{self.pinned_release()} '
+                                             f'(docs '
+                                             f'{HERMES_PIN["docs_verified"]})'})
+                else:
+                    checks.append({
+                        'check': f'Hermes version matches pinned release '
+                                 f'({self.pinned_release()})', 'ok': False,
+                        'detail': f'installed version {found} != pinned '
+                                  f'{pinned}. Install the pinned release '
+                                  f'(e.g. `pipx install hermes-agent=={pinned}`) '
+                                  f'or re-verify against the new release and '
+                                  f'update provider.hermes_pin deliberately.'})
             except ToolInfrastructureError as exc:
                 checks.append({'check': 'Hermes CLI --version', 'ok': False,
                                'detail': str(exc)})
@@ -403,7 +463,10 @@ class HermesBackend(Backend):
             self.provider.get('requested_effort'),
             self.served_models)
         info.update({'backend': self.name, 'hermes_pin': dict(HERMES_PIN),
+                     'hermes_pin_enforced': self.pinned_release(),
                      'hermes_reported_version': self.reported_version,
+                     'hermes_reported_release': self._version_token(
+                         self.reported_version),
                      'hermes_home': self.home_summary(),
                      'usage_source': 'hermes --usage-file JSON (provider-reported '
                                      'tokens/cost; post-hoc, not a spend limiter)'})
