@@ -259,14 +259,17 @@ def test_approved_agenda_budget_reload_keeps_consumption_and_artifact(tmp_path):
     store.close();agenda.close()
 
 
-@pytest.mark.parametrize('previous_role',['scout','reproducer'])
-def test_scout_window_hands_off_even_without_structured_hypothesis(tmp_path, previous_role):
+@pytest.mark.parametrize('previous_role,previous_sessions,origin,start_role',[
+    ('scout',1,'agenda',None),('reproducer',1,'agenda',None),
+    (None,0,'public_hypothesis_follow_up:parent:hypothesis','reproducer')])
+def test_scout_window_hands_off_even_without_structured_hypothesis(
+        tmp_path, previous_role, previous_sessions, origin, start_role):
     scaffold=build_job(tmp_path,E2E_SCRIPT)
     root=tmp_path/'research';root.mkdir()
     agenda=Investigations(root/'investigations.sqlite');knowledge=KnowledgeBase(root/'knowledge.sqlite')
-    item=agenda.create('Scout source research without structured metadata',budgets={'max_model_seconds':60})
-    item['consumed']['sessions']=1
-    item['checkpoint']['role']=previous_role
+    item=agenda.create('Scout source research without structured metadata',origin=origin,budgets={'max_model_seconds':60})
+    item['consumed']['sessions']=previous_sessions
+    item['checkpoint'].update(role=previous_role,start_role=start_role)
     provider={'name':'test','credential_file':str(tmp_path/'unused.env'),'requested_model':'FakeModel-1'}
     runtime={'root':str(root),'task':'seed_demo','task_root':str(scaffold.adapter.root),
              'provider':provider,'reproducer':provider,
@@ -282,3 +285,46 @@ def test_scout_window_hands_off_even_without_structured_hypothesis(tmp_path, pre
     result=run_materialized_investigation(agenda,item,knowledge,runtime)
     assert result['checkpoint']['role']=='reproducer'
     agenda.close();knowledge.close()
+
+
+@pytest.mark.parametrize('branch,verified,parent_origin,should_queue',[
+    (None,True,'agenda',True),('private-A',True,'agenda',False),
+    (None,False,'agenda',False),(None,True,'public_hypothesis_follow_up:prior',False)])
+def test_idle_agenda_advances_own_unselected_public_hypothesis_only(
+        tmp_path,monkeypatch,branch,verified,parent_origin,should_queue):
+    from scripts.autoresearch_seeder.service import enqueue_public_follow_up
+    from scripts.autoresearch_seeder.store import ResearchStore
+    root=tmp_path/'research';root.mkdir();cfg=config();cfg['service']['follow_up_hypotheses']=True
+    agenda=Investigations(root/'investigations.sqlite')
+    parent=agenda.create('Public research',branch=branch,origin=parent_origin)
+    checkpoint={'job_stage':'seed_ready'}
+    agenda.db.execute('UPDATE investigations SET status=?,checkpoint=? WHERE id=?',
+                      ('completed',json.dumps(checkpoint),parent['id']));agenda.db.commit()
+    job=root/'jobs/autoresearch-seeder/seed_demo'/parent['id']
+    public=job/'sources/public.txt';public.parent.mkdir(parents=True);public.write_text('Public source')
+    export=job/'exports/seed-demo';artifact=export/'source-bundle';artifact.mkdir(parents=True)
+    (artifact/'program.py').write_text('# Certified parent, no candidate supplied by monitor')
+    (export/'SOURCES.json').write_text(json.dumps({'sources':[{'url':'https://example.org/paper'}]}))
+    store=ResearchStore(job/'private/research.sqlite')
+    store.record_source({'url':'https://example.org/paper','status':'accessed','local_path':str(public)})
+    for hid in ['selected','unimplemented','rejected']:
+        store.record_hypothesis({'id':hid,'mechanism':'Model-authored '+hid,
+            'source_urls':['https://example.org/paper'],'first_test':'Model-authored cheapest test'})
+    store.record_decision({'action':'reject','hypothesis_id':'rejected'})
+    store.record_decision({'action':'continue','hypothesis_id':'selected'})
+    store.close()
+    monkeypatch.setattr('scripts.autoresearch_seeder.publisher.verify_export',lambda p:{'ok':verified})
+    result=enqueue_public_follow_up(root,cfg,agenda,agenda.list())
+    if should_queue:
+        assert result['checkpoint']['hypothesis_id']=='unimplemented'
+        assert result['checkpoint']['start_role']=='reproducer'
+        assert result['branch'] is None
+        handoff=Path(result['checkpoint']['public_inputs'][0]['path'])
+        assert (handoff/'parent-artifact/program.py').is_file()
+        assert 'UNTESTED' in (handoff/'RESEARCH-HANDOFF.json').read_text()
+        assert enqueue_public_follow_up(root,cfg,agenda,agenda.list()) is None
+        # A restart never changes the parent's scientific artifacts or usage.
+        assert agenda.get(parent['id'])['consumed']['sessions']==0
+    else:
+        assert result is None
+    agenda.close()

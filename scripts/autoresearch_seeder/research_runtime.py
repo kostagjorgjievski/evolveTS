@@ -178,7 +178,9 @@ def run_materialized_investigation(agenda, record, knowledge, research):
     # prevent the stronger implementation/checking role from ever starting.
     scout_window_finished = (record['consumed']['sessions'] > 0
                              and record.get('checkpoint', {}).get('role') in ('scout', 'reproducer'))
-    role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished else 'scout'
+    prepared_follow_up = (record['origin'].startswith('public_hypothesis_follow_up:')
+                          and record.get('checkpoint', {}).get('start_role') == 'reproducer')
+    role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished or prepared_follow_up else 'scout'
     _close(controller)
     provider = copy.deepcopy(research['provider'] if role == 'scout'
                              else research.get('reproducer', research['provider']))

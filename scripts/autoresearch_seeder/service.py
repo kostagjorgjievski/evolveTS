@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from .investigations import Investigations
-from .models import atomic_write, utc
+from .models import atomic_write, digest, utc
 from .scheduler import _maybe_research_session
 
 
@@ -43,6 +43,102 @@ def totals(root):
         agenda.close()
 
 
+def enqueue_public_follow_up(root, config, agenda, records):
+    """Advance an unchosen model-authored hypothesis, never invent a method.
+
+    Only terminal shared R&D with a certified export can supply a handoff.
+    No branch-private discoveries or recursive chains of fresh budgets enter.
+    The ordinary daily admission gates have already run before this function.
+    """
+    if not config.get('service', {}).get('follow_up_hypotheses'):
+        return None
+    from .publisher import verify_export
+    from .store import ResearchStore
+    root = Path(root).resolve()
+    origins = {r['origin'] for r in records}
+    for parent in sorted(records, key=lambda r: r['created_utc'], reverse=True):
+        if parent['branch'] is not None or parent['status'] != 'completed':
+            continue
+        if parent['origin'].startswith('public_hypothesis_follow_up:'):
+            continue
+        if parent['checkpoint'].get('job_stage') != 'seed_ready':
+            continue
+        job = root/'jobs/autoresearch-seeder'/config['task']/parent['id']
+        if not (job/'private/research.sqlite').is_file():
+            continue
+        exports = [p for p in (job/'exports').glob('seed-*') if verify_export(p)['ok']]
+        if not exports:
+            continue
+        export = sorted(exports)[-1]
+        store = ResearchStore(job/'private/research.sqlite')
+        try:
+            decisions = store.list_decisions()
+            chosen = (store.last_decision() or {}).get('hypothesis_id')
+            rejected = {d.get('hypothesis_id') for d in decisions if d['action'] == 'reject'}
+            sources = store.list_sources('accessed')
+            source_map = {s['url']: s for s in sources}
+            for hypothesis in reversed(store.list_hypotheses()):
+                hid = hypothesis['id']
+                origin = 'public_hypothesis_follow_up:' + parent['id'] + ':' + hid
+                if not chosen or hid == chosen or hid in rejected or origin in origins:
+                    continue
+                cited = set(hypothesis.get('source_urls', [])) & set(source_map)
+                if not cited:
+                    continue
+                handoff = root/'follow-up-inputs'/digest(origin)[:20]
+                if handoff.exists() and not (handoff/'RESEARCH-HANDOFF.json').exists():
+                    # A previous interrupted copy never became a usable handoff.
+                    shutil.rmtree(handoff)
+                if not handoff.exists():
+                    artifact_files = list((export/'source-bundle').rglob('*'))
+                    if sum(p.stat().st_size for p in artifact_files if p.is_file()) > 96*2**20:
+                        continue
+                    handoff.mkdir(parents=True)
+                    shutil.copytree(export/'source-bundle', handoff/'parent-artifact')
+                    shutil.copyfile(export/'SOURCES.json', handoff/'PARENT-SOURCES.json')
+                    references = []
+                    reference_bytes = 0
+                    for url in sorted(cited):
+                        source = source_map[url]
+                        path = Path(source.get('local_path', ''))
+                        if path.is_file() and not path.is_symlink() and path.is_relative_to(job/'sources'):
+                            if reference_bytes + path.stat().st_size > 24*2**20:
+                                continue
+                            dest = handoff/'reference-sources'/path.name
+                            dest.parent.mkdir(exist_ok=True)
+                            shutil.copyfile(path, dest)
+                            reference_bytes += path.stat().st_size
+                            references.append({'url': url, 'path': str(dest.relative_to(handoff)),
+                                               'content_sha256': source.get('content_sha256')})
+                    atomic_write(handoff/'RESEARCH-HANDOFF.json', json.dumps({
+                        'label': 'UNTESTED model-authored direction; parent seed does not prove this mechanism',
+                        'hypothesis': hypothesis, 'parent_decisions': decisions,
+                        'parent_export': str(export), 'public_sources': sources,
+                        'copied_references': references,
+                        'instruction': 'Parent artifact is already fully verified. Use it as prepared context; '
+                            'perform the proposed new diagnostic/implementation before requesting full validation. '
+                            'Do not merely repackage or revalidate the unchanged parent.'}, indent=2))
+                topic = ('Continue this unchosen, source-backed hypothesis from your own public R&D: '
+                         + hypothesis['mechanism'] + '\nCheapest proposed test: '
+                         + hypothesis['first_test'] + '\nRead sources/provided-0/RESEARCH-HANDOFF.json '
+                         'and its certified parent-artifact. Preserve negative results; '
+                         'a prior seed does not establish this new direction.')
+                item = agenda.create(topic, origin=origin,
+                    budgets=config.get('agenda', {}).get('default_budgets'))
+                item['checkpoint'].update(start_role='reproducer', parent_investigation=parent['id'],
+                    hypothesis_id=hid, public_inputs=[{'path': str(handoff),
+                        'url': 'public-research-follow-up:' + digest(origin),
+                        'license': 'Preserve PARENT-SOURCES.json and source-specific license qualifications',
+                        'attribution': 'Own shared R&D; original public authors retained in provenance'}])
+                agenda.db.execute('UPDATE investigations SET checkpoint=? WHERE id=?',
+                                  (json.dumps(item['checkpoint']), item['id']))
+                agenda.db.commit()
+                return item
+        finally:
+            store.close()
+    return None
+
+
 def wake(root, config, ledger, runner=_maybe_research_session):
     """One deterministic admission step, then at most one bounded session."""
     root = Path(root)
@@ -67,6 +163,8 @@ def wake(root, config, ledger, runner=_maybe_research_session):
                     agenda.create(topic, budgets=config.get('agenda', {}).get('default_budgets'))
                     break
         candidate = agenda.next_eligible()
+        if candidate is None:
+            candidate = enqueue_public_follow_up(root, config, agenda, records)
         if candidate is None:
             return {'state': 'idle', 'reason': 'No eligible investigations; no model calls'}
     finally:

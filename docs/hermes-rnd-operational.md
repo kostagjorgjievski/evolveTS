@@ -144,3 +144,27 @@ hypotheses were omitted. Later windows remain with the reproducer. Role
 instructions request explicit source-linked hypotheses; the monitor supplies
 no candidate algorithm or implementation. Drafts, receipts and consumed time
 remain intact. The full implementation and host-memory suite now passes128tests.
+
+## Research continuity after a successful seed
+
+A live check found the service idle with unused daily budget after both fixed
+broad topics completed, despite researchers having recorded unchosen, untested
+hypotheses. With `service.follow_up_hypotheses` enabled, the idle path now advances
+one of those model-authored directions into a new bounded investigation. The
+monitor does not invent or implement the method.
+
+Only completed shared R&D with an intact certified export is eligible. Chosen
+and rejected hypotheses, uncited hypotheses, branch-private research and recursive
+follow-up chains are excluded. Each parent/hypothesis is queued at most once.
+The follow-up receives a frozen public parent artifact, source provenance,
+relevant cached public documents, and the model's own hypothesis/decision record.
+It starts directly with Kimi rather than repeating source discovery. The handoff
+explicitly labels the new mechanism untested; the certified parent does not
+establish it, and revalidating an unchanged parent is not the research objective.
+
+Existing per-investigation and daily admission limits remain in force, with no
+usage reset and no production branch or campaign change. This finite backlog
+can exhaust; idle checks then make zero model calls until new authorized work
+or the next daily agenda becomes available. Partial handoff copies recover
+before admission. Parent artifact and cached-reference sizes are bounded to
+fit the existing public-input limit.
