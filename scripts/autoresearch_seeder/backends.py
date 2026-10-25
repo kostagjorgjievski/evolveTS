@@ -284,6 +284,11 @@ class HermesBackend(Backend):
         lives under this job-local directory, so two jobs share nothing and
         no global agent memory leaks between them. Secrets land only in
         $HERMES_HOME/.env with mode 0600.
+
+        Native toolsets are restricted via the documented `platform_toolsets`
+        key to `cli: [todo]` (in-memory planning only): no file, terminal,
+        browser, web, memory or session_search tools — the scoped seeder MCP
+        tools are the ONLY research path a Hermes session has.
         """
         credentials = self._credentials()
         endpoint, api_key, transport = self._endpoint(credentials)
@@ -298,6 +303,7 @@ class HermesBackend(Backend):
             'model': {'provider': f'custom:{self.provider_name}',
                       'default': model},
             'agent': {'reasoning_effort': effort},
+            'platform_toolsets': {'cli': ['todo']},
             'providers': {self.provider_name: {
                 'api': endpoint, 'key_env': key_env, 'transport': transport}},
             'mcp_servers': {'seeder': {
@@ -312,7 +318,8 @@ class HermesBackend(Backend):
         env_file.chmod(0o600)
         self._home_written = True
         return {'endpoint': endpoint, 'transport': transport, 'model': model,
-                'has_key': bool(api_key), 'key_env': key_env}
+                'has_key': bool(api_key), 'key_env': key_env,
+                'native_toolsets': ['todo']}
 
     def home_summary(self) -> dict:
         """Config echo for metadata — describes the profile, never the key."""
@@ -322,7 +329,46 @@ class HermesBackend(Backend):
                 'provider': f'custom:{self.provider_name}',
                 'endpoint': endpoint, 'wire_transport': transport,
                 'mcp_server': 'seeder (stdio, tools.include filtered)',
+                'native_toolsets': ['todo'],
+                'filesystem_isolation': self.isolation_summary(),
                 'reasoning_effort': self.provider.get('requested_effort', 'medium')}
+
+    # -- filesystem isolation ----------------------------------------------
+
+    DEFAULT_DENY_READ = ('.credentials', 'runs/autoresearch-seeder-research')
+
+    def _isolation(self) -> tuple:
+        """(enabled, [absolute deny-read paths]) from config, defaulting on.
+
+        An isolated HERMES_HOME scopes what Hermes REMEMBERS; it does not
+        stop a native file tool from reading the knowledge base off disk.
+        `platform_toolsets: [todo]` removes those tools at the agent layer,
+        and this OS-level deny (sandbox-exec on darwin) is the backstop that
+        survives toolset regressions: even a shell escape cannot read the
+        scoped-knowledge or credential roots.
+        """
+        setting = self.provider.get('filesystem_isolation') or {}
+        enabled = setting.get('enabled', sys.platform == 'darwin')
+        deny = setting.get('deny_read')
+        if deny is None:
+            deny = list(self.DEFAULT_DENY_READ)
+        paths = []
+        for entry in deny:
+            path = Path(entry)
+            paths.append(path if path.is_absolute() else self.app_root / path)
+        return bool(enabled), paths
+
+    def isolation_summary(self) -> dict:
+        enabled, paths = self._isolation()
+        return {'enabled': enabled, 'mechanism': 'sandbox-exec deny-read',
+                'deny_read': [str(path) for path in paths]}
+
+    def _sandbox_prefix(self, deny_paths) -> list:
+        rules = ''.join(
+            f'(deny file-read* (subpath {json.dumps(str(path))}))'
+            for path in deny_paths)
+        profile = f'(version 1)(allow default){rules}'
+        return ['sandbox-exec', '-p', profile]
 
     # -- Backend interface ---------------------------------------------------
 
@@ -441,10 +487,31 @@ class HermesBackend(Backend):
             checks.append({'check': f'isolated Hermes home written '
                                     f'({self.home})', 'ok': True,
                            'detail': f'endpoint {summary["endpoint"]} via '
-                                     f'{summary["transport"]}'})
+                                     f'{summary["transport"]}; native '
+                                     f'toolsets restricted to {summary["native_toolsets"]}'})
         except ToolInfrastructureError as exc:
             checks.append({'check': 'isolated Hermes home written', 'ok': False,
                            'detail': str(exc)})
+        isolation_enabled, deny_paths = self._isolation()
+        if isolation_enabled:
+            import shutil
+            sandbox = shutil.which('sandbox-exec')
+            checks.append({'check': 'filesystem isolation (sandbox-exec '
+                                    'deny-read)', 'ok': sandbox is not None,
+                           'detail': 'denies read access to: '
+                                     + ', '.join(str(path)
+                                                 for path in deny_paths)
+                                     if sandbox else
+                                     'filesystem_isolation is enabled but '
+                                     'sandbox-exec was not found; live runs '
+                                     'will refuse to launch'})
+        else:
+            checks.append({'check': 'filesystem isolation (sandbox-exec '
+                                    'deny-read)', 'ok': False,
+                           'detail': 'disabled in provider.filesystem_isolation'
+                                     '; native tools could read outside the '
+                                     'workspace — enable unless this session '
+                                     'is intentionally unisolated'})
         try:
             mcp_server_command(self.job_dir, self.app_root)
             checks.append({'check': 'MCP server interpreter validated', 'ok': True})
@@ -468,6 +535,7 @@ class HermesBackend(Backend):
                      'hermes_reported_release': self._version_token(
                          self.reported_version),
                      'hermes_home': self.home_summary(),
+                     'filesystem_isolation': self.isolation_summary(),
                      'usage_source': 'hermes --usage-file JSON (provider-reported '
                                      'tokens/cost; post-hoc, not a spend limiter)'})
         return info
@@ -491,6 +559,17 @@ class HermesBackend(Backend):
                    '--query-file', str(prompt_path),
                    '--provider', f'custom:{self.provider_name}',
                    '--ignore-rules', '--in', str(self.job_dir / 'worker')]
+        isolation_enabled, deny_paths = self._isolation()
+        if isolation_enabled:
+            import shutil
+            if not shutil.which('sandbox-exec'):
+                raise ToolInfrastructureError(
+                    'Filesystem isolation is enabled for the Hermes backend '
+                    'but sandbox-exec is unavailable; refusing to launch an '
+                    'unisolated session (set provider.filesystem_isolation.'
+                    'enabled=false only if you accept native-tool access to '
+                    'the whole filesystem).')
+            command = self._sandbox_prefix(deny_paths) + command
         if model:
             command += ['-m', model]
         env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),

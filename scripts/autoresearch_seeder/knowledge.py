@@ -119,6 +119,16 @@ class KnowledgeBase:
                     '(controller confirmation) before review')
         inputs = list(inputs or [])
         audience = self._computed_audience(kind, branch, level, inputs)
+        if kind == 'package':
+            combined = json.loads(audience).get('branches', [])
+            if len(combined) > 1:
+                raise KnowledgeError(
+                    'cross-branch package rejected: it combines private '
+                    'inputs from branches ' + ', '.join(combined) + ', which '
+                    'would expose each branch to the other. Author packages '
+                    'per branch, or release one branch\'s evidence at the '
+                    'level boundary first (the released copy is public and '
+                    'no longer taints).')
         record = {'id': new_id('kr'), 'kind': kind, 'branch': branch,
                   'level': int(level), 'status':
                       'pending_review' if kind == 'infrastructure' else 'active',
@@ -225,30 +235,42 @@ class KnowledgeBase:
     def _eligible_where(self, branch: str, level: int):
         """Records a branch may see at a level.
 
-        visible := external (level<=L)
-                OR reviewed infrastructure
-                OR released (level<=L)
-                OR audience covers (branch in branches AND level>=min_level)
+        visible := reviewed infrastructure
+                OR branch-scoped audience covers (branch in branches AND
+                   level >= min_level)
+                OR level-scoped PUBLIC audience (external records, released
+                   copies, and packages derived purely from public inputs)
+                   with level >= min_level
         branch_private records of OTHER branches are absent from the query
         result itself — separation is in storage/retrieval, not prompting.
         """
         rows = self.db.execute(
-            'SELECT id, audience, level, status, kind, branch FROM records'
+            'SELECT id, audience, status, kind, payload FROM records'
             ' WHERE status != "pending_review"').fetchall()
         eligible = []
-        for record_id, audience_json, record_level, status, kind, branch_id in rows:
+        for record_id, audience_json, status, kind, payload_json in rows:
             audience = json.loads(audience_json)
-            if kind == 'external' and record_level <= level:
+            if status == 'reviewed':   # approved infrastructure correction
                 eligible.append(record_id)
-            elif kind == 'infrastructure' and status == 'reviewed':
-                eligible.append(record_id)
-            elif kind == 'released' and record_level <= level:
-                eligible.append(record_id)
-            elif audience.get('tainted') or audience.get('branches'):
-                if branch in audience.get('branches', []) \
-                        and level >= audience.get('min_level', 0) \
+                continue
+            min_level = int(audience.get('min_level', 0))
+            scoped_branches = audience.get('branches') or []
+            if scoped_branches or audience.get('tainted'):
+                if branch in scoped_branches and level >= min_level \
                         and status.startswith(('active', 'released')):
                     eligible.append(record_id)
+                continue
+            if level >= min_level:
+                # Public audience: external, released copies, and packages
+                # derived purely from public inputs — but a DRAFT public
+                # package circulates to no one before it is ready.
+                if kind == 'package':
+                    try:
+                        if not json.loads(payload_json).get('ready'):
+                            continue
+                    except ValueError:
+                        continue
+                eligible.append(record_id)
         return set(eligible)
 
     def eligible_records(self, branch: str, level: int) -> list:

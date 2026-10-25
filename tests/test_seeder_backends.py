@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO))
 from scripts.autoresearch_seeder.backends import HERMES_PIN, HermesBackend
 from scripts.autoresearch_seeder.models import (ProviderRateLimit,
                                                 ProviderRefused)
-from scripts.autoresearch_seeder.transport import RealTransport, TransportResult
+from scripts.autoresearch_seeder.transport import RealTransport
 
 try:
     import yaml
@@ -315,6 +315,108 @@ def test_fake_hermes_error_output_is_classified(tmp_path):
     binary.write_text('#!/bin/sh\necho "boom" >&2\nexit 3\n')
     with pytest.raises(RuntimeError, match='exit code 3'):
         backend.run('prompt', [], job / 'worker', {'session_seconds': 10})
+
+
+# ---------------------------------------------------------------------------
+# Launcher filesystem isolation — native tools must not bypass scoped knowledge
+# ---------------------------------------------------------------------------
+
+SNOOP_HERMES = """#!/bin/sh
+# Tries to read the scoped knowledge base and repo credentials OUTSIDE its
+# workspace, exactly like a native file tool (or shell escape) would.
+secret_file="$HERMES_SNOOP_TARGET"
+if [ -r "$secret_file" ]; then
+  echo "SNOOPED: $(head -c 40 "$secret_file")" > "$HERMES_HOME/test-args.txt"
+else
+  echo "DENIED" > "$HERMES_HOME/test-args.txt"
+fi
+printf '%s\\n' '{"type":"result","text":"done"}'
+exit 0
+"""
+
+
+def test_hermes_launcher_denies_reads_outside_workspace(tmp_path):
+    """Real sandbox-exec proof: a native read of the knowledge base fails.
+
+    An isolated HERMES_HOME scopes memory, not the filesystem — this test
+    runs the actual launcher path (sandbox-exec deny-read prefix) against a
+    binary that attempts the read and records the outcome. The snoop target
+    reaches the child through the credential env (the only pass-through),
+    and the control run proves the read succeeds without the wrapper.
+    """
+    if sys.platform != 'darwin':
+        pytest.skip('sandbox-exec isolation is darwin-only')
+    knowledge = tmp_path / 'runs' / 'autoresearch-seeder-research'
+    knowledge.mkdir(parents=True)
+    secret = knowledge / 'knowledge.sqlite'
+    secret.write_text('BRANCH-PRIVATE-SCIENCE')
+    credential = make_credential(tmp_path)
+    credential.write_text(credential.read_text()
+                          + f'HERMES_SNOOP_TARGET={secret}\n')
+    binary = install_fake_hermes(tmp_path, SNOOP_HERMES)
+    job = tmp_path / 'job'
+    (job / 'worker').mkdir(parents=True)
+    backend = HermesBackend(
+        {'credential_file': str(credential), 'requested_model': 'glm-5.3',
+         'requested_effort': 'medium'}, job, app_root=tmp_path,
+        hermes_bin=str(binary))
+
+    result = backend.run('prompt', [], job / 'worker', {'session_seconds': 60})
+    assert result.finished_reason == 'done'
+    verdict = (job / 'private' / 'hermes-home' / 'test-args.txt').read_text()
+    assert verdict.strip() == 'DENIED', verdict
+
+    # Control: with isolation disabled the same read succeeds — proving the
+    # denial came from the launcher wrapper, not the fake binary or a
+    # missing environment.
+    unisolated = HermesBackend(
+        {'credential_file': str(credential), 'requested_model': 'glm-5.3',
+         'requested_effort': 'medium',
+         'filesystem_isolation': {'enabled': False}},
+        job, app_root=tmp_path, hermes_bin=str(binary))
+    unisolated.run('prompt', [], job / 'worker', {'session_seconds': 60})
+    verdict = (job / 'private' / 'hermes-home' / 'test-args.txt').read_text()
+    assert verdict.startswith('SNOOPED'), verdict
+
+
+def test_hermes_config_restricts_native_toolsets(tmp_path):
+    """The documented platform_toolsets key caps native tools to planning.
+
+    Without file/terminal/browser/web/memory/session_search toolsets, the
+    seeder MCP dispatcher is the only research path a Hermes session has.
+    """
+    import yaml
+    job = tmp_path / 'job'; job.mkdir()
+    backend = make_backend(job, make_credential(tmp_path))
+    backend.write_home()
+    config = yaml.safe_load(
+        (job / 'private' / 'hermes-home' / 'config.yaml').read_text())
+    assert config['platform_toolsets'] == {'cli': ['todo']}
+    summary = backend.home_summary()
+    assert summary['native_toolsets'] == ['todo']
+    assert summary['filesystem_isolation']['enabled'] is True
+    assert any('autoresearch-seeder-research' in path for path in
+               summary['filesystem_isolation']['deny_read'])
+
+
+def test_isolation_unavailable_fails_preflight_and_run(tmp_path):
+    if sys.platform != 'darwin':
+        pytest.skip('sandbox-exec isolation is darwin-only')
+    binary = install_fake_hermes(tmp_path, '#!/bin/sh\nexit 0\n')
+    backend, job = prepare_run_job(tmp_path, binary)
+    backend.provider['filesystem_isolation'] = {
+        'enabled': True, 'deny_read': [str(tmp_path / 'research')]}
+    original_path = os.environ.get('PATH')
+    os.environ['PATH'] = '/nonexistent'   # no sandbox-exec anywhere
+    try:
+        checks = backend.preflight()
+        assert any(not check['ok'] and 'filesystem isolation' in check['check']
+                   for check in checks)
+        from scripts.autoresearch_seeder.models import ToolInfrastructureError
+        with pytest.raises(ToolInfrastructureError, match='sandbox-exec'):
+            backend.run('prompt', [], job / 'worker', {'session_seconds': 30})
+    finally:
+        os.environ['PATH'] = original_path
 
 
 # ---------------------------------------------------------------------------

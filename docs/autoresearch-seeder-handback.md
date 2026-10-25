@@ -121,6 +121,48 @@ presented as such). Preflight enforces the Hermes release pin
 (`provider.hermes_pin`, default v0.22.5): a detected version mismatch fails
 the live preflight with both versions shown.
 
+## Phase 4 — knowledge-sharing fixes + launcher isolation
+
+External review on the Mini (`7ddcc70`, 110 passed there) found two
+retrieval bugs the suite missed; both are fixed with regressions, and the
+Hermes launcher now enforces the scoped-knowledge boundary at two layers.
+
+1. **Cross-branch packages were dual-visible.** A package combining private
+   inputs from branches A and B received an audience listing BOTH branches,
+   so each branch received it — leaking one branch's private science to the
+   other. Such packages are now REJECTED at write time with both branches
+   named; the only cross-branch route is an authorized release at the level
+   boundary (a released copy is public and no longer taints combinations).
+   Regression: `test_cross_branch_package_is_rejected_not_dual_visible`,
+   including the legitimate post-release combination case.
+2. **Public packages were invisible.** A package derived purely from public
+   sources matched no eligibility clause (empty-branch audience) and never
+   reached any branch. Eligibility now treats a public audience uniformly
+   (external, released copies, public packages) at `level >= min_level`,
+   while DRAFT public packages circulate to no one before `ready`.
+   Regression: `test_public_package_is_eligible_for_branches` (visibility,
+   readiness gating, non-blocking delivery with a frozen snapshot).
+3. **Hermes launcher filesystem isolation** (reviewer: an isolated
+   HERMES_HOME does not enforce filesystem isolation). Two layers, both
+   verified against official documentation or executed for real:
+   `platform_toolsets: {cli: [todo]}` in the generated config restricts
+   native toolsets to in-memory planning (no file/terminal/browser/web/
+   memory/session_search tools — verified key from the official
+   cli-config.yaml.example), and the launcher wraps the process in
+   `sandbox-exec` with deny-read rules on the scoped-knowledge root and
+   credentials (default enabled on darwin; `run` refuses to launch an
+   unisolated session when sandbox-exec is unavailable). The regression
+   test executes the REAL wrapper: a fake CLI attempts to read the
+   knowledge base and must be denied, while an unisolated control run
+   proves the same read succeeds — the denial is the wrapper's doing.
+   Isolation state is recorded in metadata and checked in preflight.
+
+The pinned Hermes runtime itself remains untested on the Mini (not yet
+installed). After `pipx install hermes-agent==0.22.5`: the skipped
+discovery test runs; additionally verify `hermes chat --list-toolsets`
+shows the restricted set under the generated profile, and that a live
+arm-B preflight passes all hermes:* checks before any paid session.
+
 ## Phase 3 — Mac Mini acceptance findings + autonomous research layer
 
 ### The three acceptance findings, fixed

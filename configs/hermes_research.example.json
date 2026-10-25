@@ -11,7 +11,15 @@
     "api_key_env": "ANTHROPIC_AUTH_TOKEN",
     "key_env": "SEEDER_GLM_API_KEY",
     "wire_transport": "anthropic_messages",
-    "hermes_pin": "v0.22.5"
+    "hermes_pin": "v0.22.5",
+    "filesystem_isolation": {
+      "enabled": true,
+      "deny_read": [
+        ".credentials",
+        "runs/autoresearch-seeder-research"
+      ],
+      "note": "sandbox-exec deny-read backstop; native toolsets are additionally restricted to [todo] in the generated Hermes config so the scoped seeder MCP tools are the only research path"
+    }
   },
   "budgets": {
     "session_seconds": 1200
@@ -28,5 +36,5 @@
     },
     "shelve": "budget exhaustion or repeated sessions with no new activity shelve an investigation; shelved items stay durable and resumable"
   },
-  "_comment": "DISABLED EXAMPLE for the autonomous research agenda (Hermes backend by default; claude_code works identically). The agenda runs investigations that span sessions, with preserved checkpoints, finite budgets, and automatic shelving of unproductive lines. Agenda eligibility is a pure storage read — idle scheduling never costs model calls. Branch-private scientific results never cross branches before an explicit release at the level boundary; infrastructure corrections distribute only after controller review and physically cannot carry scientific fields. Research sessions never modify or inject findings into existing campaigns; the RSI attempt side consumes findings ONLY through the nonblocking research-check. All data lives under the research root (default <run-root>/autoresearch-seeder-research), which is machine-local and never committed."
+  "_comment": "DISABLED EXAMPLE for the autonomous research agenda (Hermes backend by default; claude_code works identically). The agenda runs investigations that span sessions, with preserved checkpoints, finite budgets, and automatic shelving of unproductive lines. Agenda eligibility is a pure storage read \u2014 idle scheduling never costs model calls. Branch-private scientific results never cross branches before an explicit release at the level boundary; infrastructure corrections distribute only after controller review and physically cannot carry scientific fields. Research sessions never modify or inject findings into existing campaigns; the RSI attempt side consumes findings ONLY through the nonblocking research-check. All data lives under the research root (default <run-root>/autoresearch-seeder-research), which is machine-local and never committed."
 }

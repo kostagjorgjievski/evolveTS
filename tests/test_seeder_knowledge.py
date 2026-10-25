@@ -294,6 +294,73 @@ def test_delivered_handoff_frozen_and_auditable(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Retrieval bug regressions (found by external review on the Mini)
+# ---------------------------------------------------------------------------
+
+def test_cross_branch_package_is_rejected_not_dual_visible(tmp_path):
+    """A package combining private inputs from A AND B must never exist.
+
+    Before the fix, its computed audience listed both branches and the
+    eligibility query handed it to each — leaking one branch's private
+    science to the other. It is now rejected at write time; the only route
+    to share across branches is an authorized release at the boundary.
+    """
+    base = make_base(tmp_path)
+    private_a, _ = seed_branch_history(base, 'branchA', BRANCH_A_CODE,
+                                       'secret A', [])
+    private_b, _ = seed_branch_history(base, 'branchB', BRANCH_B_CODE,
+                                       'secret B', [])
+    with pytest.raises(KnowledgeError, match='cross-branch package rejected'):
+        base.add('package', {'summary': 'A+B combined'}, level=0,
+                 inputs=[private_a['id'], private_b['id']])
+    with pytest.raises(KnowledgeError, match='cross-branch package rejected'):
+        base.add_finding(finding_sections(None), branch='branchA',
+                         inputs=[private_b['id']])   # authored-in-A, B input
+    # After an AUTHORIZED release of B's evidence, the released copy is
+    # public and combining it with A's private input taints only by A.
+    released_b = base.release(private_b['id'], at_level=1)
+    legit = base.add_finding(finding_sections(BRANCH_A_CODE), branch='branchA',
+                             inputs=[released_b['id'], private_a['id']],
+                             ready=True)
+    audience = json.loads(base.get(legit['id'])['audience'])
+    assert audience['branches'] == ['branchA']
+    assert base.ready_findings('branchB', 9, parent=parent_for(BRANCH_A_CODE)) \
+        == []   # B sees nothing of it pre-release
+
+
+def test_public_package_is_eligible_for_branches(tmp_path):
+    """A package derived purely from public sources must reach branches.
+
+    Before the fix, its empty-branch audience matched no eligibility clause
+    and public findings were invisible to everyone.
+    """
+    base = make_base(tmp_path)
+    paper = base.add('external', {'kind': 'paper',
+                                  'url': 'https://example.org/paper'})
+    finding = base.add_finding(finding_sections(None), level=0,
+                               inputs=[paper['id']], ready=True)
+    visible = base.eligible_records('branchB', level=0)
+    assert finding['id'] in {record['id'] for record in visible}
+    ready = base.ready_findings('branchB', level=0,
+                                parent=parent_for(BRANCH_B_CODE))
+    assert [record['id'] for record in ready] == [finding['id']]
+    # Non-blocking check delivers it, frozen into the attempt record.
+    attempt = tmp_path / 'attempt_00' / 'record.json'
+    attempt.parent.mkdir(parents=True)
+    attempt.write_text('{}')
+    outcome = check_findings(tmp_path / 'research', 'branchB', 0,
+                             parent=parent_for(BRANCH_B_CODE),
+                             attempt_record=str(attempt))
+    assert [record['id'] for record in outcome['findings']] == [finding['id']]
+    assert outcome['delivered'] and outcome['delivered'][0]['delivered']
+    # A DRAFT public package circulates to no one before it is ready.
+    draft = base.add_finding(finding_sections(None), level=0,
+                             inputs=[paper['id']])
+    assert draft['id'] not in {record['id'] for record
+                               in base.eligible_records('branchB', 0)}
+
+
+# ---------------------------------------------------------------------------
 # Provenance taint: public support never launders private inputs
 # ---------------------------------------------------------------------------
 

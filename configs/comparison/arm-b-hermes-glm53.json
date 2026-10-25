@@ -12,7 +12,15 @@
     "api_key_env": "ANTHROPIC_AUTH_TOKEN",
     "key_env": "SEEDER_GLM_API_KEY",
     "wire_transport": "anthropic_messages",
-    "hermes_pin": "v0.22.5"
+    "hermes_pin": "v0.22.5",
+    "filesystem_isolation": {
+      "enabled": true,
+      "deny_read": [
+        ".credentials",
+        "runs/autoresearch-seeder-research"
+      ],
+      "note": "sandbox-exec deny-read backstop; native toolsets are additionally restricted to [todo] in the generated Hermes config so the scoped seeder MCP tools are the only research path"
+    }
   },
   "budgets": {
     "model_session_seconds": 1200,

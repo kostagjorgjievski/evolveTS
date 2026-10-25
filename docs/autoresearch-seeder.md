@@ -163,10 +163,25 @@ drives the session.
   Hermes memory, session or setting is shared between jobs. The GLM endpoint
   is registered as a named custom provider with the `anthropic_messages`
   transport; requested effort goes in `agent.reasoning_effort`. Requires the
-  Hermes CLI on the machine (preflight reports the exact prerequisite and the
-  version probe); nothing is auto-installed, and there is no silent model
-  fallback (the requested model is passed explicitly; requested-vs-served is
-  recorded in job metadata, effort is never claimed attested).
+  Hermes CLI on the machine — preflight states the prerequisite and
+  **enforces the release pin** (`provider.hermes_pin`, default v0.22.5: a
+  detected version mismatch or unparseable output fails the live preflight
+  with both versions shown, and `run` refuses a failed preflight). Nothing
+  is auto-installed, and there is no silent model fallback (the requested
+  model is passed explicitly; requested-vs-served is recorded in job
+  metadata, effort is never claimed attested).
+
+  Two enforcement layers keep a Hermes session inside the scoped-knowledge
+  interface (an isolated HERMES_HOME alone scopes only what Hermes
+  remembers): (1) the documented `platform_toolsets` config key restricts
+  native toolsets to `cli: [todo]` — no file, terminal, browser, web,
+  memory or session_search tools, so the seeder MCP dispatcher is the only
+  research path; (2) the launcher wraps the process in `sandbox-exec` with
+  deny-read rules on the scoped-knowledge root and credentials
+  (`provider.filesystem_isolation`, default enabled on darwin) — an
+  OS-level backstop that survives toolset regressions. A regression test
+  runs the real wrapper against a binary that attempts the read and must be
+  denied, with an unisolated control proving the wrapper is what denies it.
 
 Backend selection is per job config; an unknown value fails factory
 construction immediately. `preflight --live` runs the selected backend's own
