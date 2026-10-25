@@ -1,0 +1,27 @@
+{
+  "competition": "google-verifiable-quantum-circuit-compilation",
+  "task": "dqi",
+  "m": 4095,
+  "n": 70,
+  "degree": 12,
+  "r": 2016,
+  "num_shots": 102400,
+  "batch_size": 256,
+  "log2_delta": -128.0,
+  "development_salt": "evolvets-dqi-development-v1",
+  "generator_timeout_seconds": 600,
+  "verifier_timeout_seconds": 28800,
+  "max_workers": 4,
+  "memory_gib": 10,
+  "reference_cost": 24439468807434.34,
+  "kickmix_commit": "638777fac4379bc62e2a1e4a52cf1a1753895d48",
+  "official_sha256": {
+    "verifiers/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "verifiers/dqi/__init__.py": "01c870aa9763f4e4357fc6654bff1d3296cec995bd0943f87b4a48946ada5b40",
+    "verifiers/dqi/dqi_reference_circuit.py": "2b8e1b80a806157c333a7e308eaf2499ee09de499efbc05875202c327959959e",
+    "verifiers/dqi/verify_submission_dqi.py": "f14274bc0943fb9769ddb01131be6063191a15009fe1caf1d4bdd9fd25194e65",
+    "sample_submission/dqi.kmb": "959471d05a26373b4f14ca0cae2d8639ea25f18170d9f6532139aa51ccc04995"
+  },
+  "reference_program_sha256": "82cb14f1c06c2d2594a4708d495ca88ee6fbcf2d0c19918e2f75d7a5f725c371",
+  "reference_result_sha256": "3f71c40a83f68a879ea6247da4a49ba179d94f221ed54c883a2c50ec3d4119ef"
+}

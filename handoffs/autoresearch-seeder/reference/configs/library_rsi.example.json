@@ -1,0 +1,87 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "experiment_mode": "library_rsi",
+  "knowledge_publication": "cycle_snapshot",
+  "store": {
+    "driver": "sqlite",
+    "journal_mode": "WAL",
+    "path": "runs/library-rsi/library.sqlite",
+    "artifacts": "runs/library-rsi/artifacts"
+  },
+  "researchers": [
+    {
+      "id": "gpt_researcher",
+      "requested_model": "gpt-6.1-sol",
+      "transport": "to_be_verified",
+      "max_active_assignments": 1
+    },
+    {
+      "id": "opus_researcher",
+      "requested_model": "Opus 5.5",
+      "transport": "claude_oauth",
+      "exact_model_id": "claude-opus-5-5",
+      "credential_file": ".credentials/claude-research.env",
+      "not_before": "2026-10-24T17:01:13+08:00",
+      "max_active_assignments": 1
+    }
+  ],
+  "scheduling": {
+    "independent_branches": true,
+    "researchers_max_active_each": 1,
+    "mandatory_worker_claims": false
+  },
+  "research_queue": {
+    "ready_high_watermark": 20,
+    "question_cache": true,
+    "questions_async": true,
+    "require_budget_before_launch": false,
+    "launch_policy": "bounded_requested_seed_then_demand"
+  },
+  "execution": {
+    "shell_tool": false,
+    "candidate_network": false,
+    "candidate_credentials": false,
+    "official_files_writable": false,
+    "diagnostic_timeout_seconds": 60,
+    "diagnostic_memory_gib": 2,
+    "generation_timeout_seconds": 600,
+    "process_tree_memory_gib": 10,
+    "full_validation_concurrency": 1,
+    "verifier_workers": 4,
+    "full_validation_timeout_seconds": 28800,
+    "worker_session_timeout_seconds": 12000
+  },
+  "acceptance": {
+    "required_before_production": true,
+    "reproduction_reward_minimum": 8.88090341306356,
+    "full_shots": 102400,
+    "require_fresh_salt": true,
+    "require_identical_frozen_source": true,
+    "require_provenance_audit": true,
+    "require_department_cost_comparison": true
+  },
+  "dreaming": {
+    "after_cycle_barrier": true,
+    "combinations_require_new_verification": true,
+    "retain_negative_evidence": true,
+    "retain_pareto_components": true
+  },
+  "production": {
+    "automatic_enable": false,
+    "modify_current_e0": false
+  },
+  "advisor": {
+    "mode": "on_demand",
+    "decisions": [
+      "continue",
+      "pivot",
+      "explore"
+    ],
+    "directions_per_answer": 3,
+    "worker_may_decline": true,
+    "exclusive_method_assignment": false,
+    "cached_answers": true,
+    "research_missing_evidence": true
+  }
+}
