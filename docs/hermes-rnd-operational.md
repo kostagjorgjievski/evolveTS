@@ -133,3 +133,14 @@ bridge now accepts the publisher-gated sealed source manifest as authoritative
 provenance for an already verified seed. Limited diagnostic findings still
 require explicit hypothesis-to-source linkage. The exact existing export was
 registered idempotently, without rerunning grading or altering candidate code.
+
+## Bounded scout handoff repair
+
+A later source investigation exposed another routing fault: role selection
+based solely on registered hypotheses could keep assigning productive but
+unfinished source exploration to the scout at every checkpoint. A completed
+scout window now hands its full own-job state to Kimi even when structured
+hypotheses were omitted. Later windows remain with the reproducer. Role
+instructions request explicit source-linked hypotheses; the monitor supplies
+no candidate algorithm or implementation. Drafts, receipts and consumed time
+remain intact. The full implementation and host-memory suite now passes128tests.

@@ -201,12 +201,15 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                 if role == 'scout':
                     brief += ('ROLE: SCOUT. Inspect original external sources; compare distinct mechanisms. '
                               'Record concrete hypotheses with source URLs, compatibility, risks and cheapest first test. '
-                              'Save a precise decision/next action. Finish after a useful shortlist; '
+                              'Call propose_hypothesis with explicit source_urls (actual fetched URLs), then '
+                              'save a precise decision/next action. Finish after a useful shortlist; '
                               'a separate reproducer continues your durable job. No official validation in this role.\n')
                     tools = [t for t in tools if t != 'run_development_validation']
                 else:
                     brief += ('ROLE: REPRODUCER. Check the scout interpretation against original sources, correct errors, '
-                              'implement and diagnose the selected method, then request full official validation. '
+                              'If the scout left no structured hypotheses, first register source-linked hypotheses '
+                              'from its own saved research, with explicit source_urls. '
+                              'Implement and diagnose the selected method, then request full official validation. '
                               'Write artifact/GENERATION.md (via worker/attempt_00/artifact/GENERATION.md) with exact '
                               'generation instructions before validation. Record decisions citing actual experiment IDs. '
                               'Cite the chosen hypothesis_id in record_decision so evidence is attached to the correct method. '
