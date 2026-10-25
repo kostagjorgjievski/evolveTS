@@ -49,19 +49,27 @@ def atomic_write(path, text: str) -> None:
 def bundle_hash(directory) -> str:
     """Deterministic hash over every regular file under directory.
 
-    Symlinks and special files are rejected exactly like the task sandboxes
-    reject them, so a frozen bundle cannot silently change meaning.
+    Ordinary nested helper directories are allowed — a candidate may package
+    vendored modules in subfolders. Symlinks (including directory symlinks),
+    hard-linked files and special files are rejected exactly like the task
+    sandboxes reject them, so a frozen bundle cannot silently change meaning.
     """
     directory = Path(directory)
     if not directory.is_dir():
         raise ValueError('Bundle directory required')
+    if directory.is_symlink():
+        raise ValueError('Bundle root may not be a symlink')
     entries = []
     total = 0
     for path in sorted(directory.rglob('*')):
         relative = path.relative_to(directory).as_posix()
         info = path.lstat()
-        if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ValueError('Bundle links/special files forbidden: ' + relative)
+        if path.is_symlink():
+            raise ValueError('Bundle symlinks forbidden: ' + relative)
+        if stat.S_ISDIR(info.st_mode):
+            continue          # ordinary directory: descend into it
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError('Bundle hard links/special files forbidden: ' + relative)
         total += info.st_size
         if total > BUNDLE_MAX_BYTES:
             raise ValueError('Bundle exceeds 128 MiB')

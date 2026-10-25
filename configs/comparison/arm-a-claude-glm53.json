@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "task": "dfthcsos",
+  "provider": {
+    "backend": "claude_code",
+    "name": "glm",
+    "credential_file": ".credentials/glm.env",
+    "requested_model": "glm-5.3",
+    "requested_effort": "medium"
+  },
+  "budgets": {
+    "model_session_seconds": 1200,
+    "job_wall_clock_seconds": 14400,
+    "max_total_cost_usd": 25.0,
+    "max_tool_calls": 600,
+    "max_web_searches": 40,
+    "max_provider_retries": 5,
+    "retry_wait_seconds": 300
+  },
+  "validation": {
+    "max_development_attempts": 6,
+    "development_salt_key": "development_salt",
+    "final_salt_key": "final_salt",
+    "improvement_margin": 0.0,
+    "conservative_comparison": "both_salts"
+  },
+  "research": {
+    "blocked_hosts": ["kaggle.com", "www.kaggle.com"],
+    "allow_network_fetch": true,
+    "max_sources": 200
+  },
+  "queue": {
+    "heavy_lock": "work/runtime-locks/dqi-cpu.lock"
+  },
+  "publishing": {
+    "library_snapshot": false
+  },
+  "production": {
+    "automatic_enable": false
+  },
+  "_comment": "COMPARISON ARM A (DISABLED — do not enable without operator approval). Claude Code researcher backend driving GLM-5.3 at requested medium effort through the Anthropic-compatible endpoint in .credentials/glm.env (machine-local, never committed). Development sessions are bounded to 1200s (20 minutes) of model-session time; official validation runs through the trusted task adapter outside that allowance. Identical budgets, frozen baseline, prepared context and MCP tools as arm B; the ONLY difference is provider.backend. No strong-model advisor in either arm. Comparison protocol: docs/autoresearch-seeder-comparison.md."
+}

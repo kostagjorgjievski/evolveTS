@@ -113,45 +113,121 @@ class Controller:
         return job
 
     # -- leases -----------------------------------------------------------------
+    # Ownership model: a lease is owned by (process identity, secret token).
+    # A LIVE owner always wins, even past its TTL — expiry only allows
+    # takeover when liveness cannot be established (dead owner, or a foreign
+    # host whose processes we cannot observe). Every controller instance
+    # generates its own token at claim time; only the current token holder
+    # may renew or release, so a stale owner that comes back can never
+    # disturb a replacement owner's lease.
+    LEASE_TTL_SECONDS = 600
+
     def lease_path(self):
         return self.job_dir / 'private' / 'lease.json'
 
-    def claim(self, ttl_seconds: int = 3600) -> dict:
+    def _lease_owner_identity(self) -> dict:
+        owner = _process_identity(os.getpid())
+        try:
+            command = subprocess.run(['ps', '-p', str(os.getpid()), '-o', 'command='],
+                                     capture_output=True, text=True, timeout=5).stdout.strip()
+            start = subprocess.run(['ps', '-p', str(os.getpid()), '-o', 'lstart='],
+                                   capture_output=True, text=True, timeout=5).stdout.strip()
+        except (subprocess.SubprocessError, OSError):
+            command, start = '', ''
+        owner.update({'command': command[:200], 'process_start': start})
+        return owner
+
+    @staticmethod
+    def _lease_expired(lease: dict) -> bool:
+        import datetime
+        try:
+            expiry = datetime.datetime.fromisoformat(lease.get('expires_utc', ''))
+        except (ValueError, TypeError):
+            return True
+        return expiry <= datetime.datetime.now(datetime.timezone.utc)
+
+    def claim(self, ttl_seconds: int = None) -> dict:
         """Atomically claim the job; reconcile any previous owner first."""
+        ttl = self.LEASE_TTL_SECONDS if ttl_seconds is None else ttl_seconds
         lock_path = self.job_dir / 'private' / 'claim.lock'
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open('a') as lock:
             import fcntl
+            import uuid
             fcntl.flock(lock, fcntl.LOCK_EX)
             lease_file = self.lease_path()
             if lease_file.exists():
                 lease = json.loads(lease_file.read_text())
-                if not lease.get('released') and lease.get('expires_utc') > utc() \
-                        and _process_alive(lease.get('owner', {})):
-                    raise JobBusy('A live owner holds this job lease: '
-                                  + json.dumps(lease.get('owner', {})))
-                self.store.event('lease_reclaimed', {'previous': lease})
-            owner = _process_identity(os.getpid())
-            try:
-                command = subprocess.run(['ps', '-p', str(os.getpid()), '-o', 'command='],
-                                         capture_output=True, text=True, timeout=5).stdout.strip()
-                start = subprocess.run(['ps', '-p', str(os.getpid()), '-o', 'lstart='],
-                                       capture_output=True, text=True, timeout=5).stdout.strip()
-            except (subprocess.SubprocessError, OSError):
-                command, start = '', ''
-            owner.update({'command': command[:200], 'process_start': start})
-            lease = {'owner': owner, 'claimed_utc': utc(),
+                previous_owner = lease.get('owner', {})
+                same_host = previous_owner.get('hostname') == platform.node()
+                if not lease.get('released'):
+                    if same_host and _process_alive(previous_owner):
+                        raise JobBusy(
+                            'A live owner holds this job lease '
+                            '(expiry does not override a live owner): '
+                            + json.dumps(previous_owner))
+                    if not same_host and not self._lease_expired(lease):
+                        raise JobBusy(
+                            'A lease from another host is still unexpired and '
+                            'cannot be reconciled locally: '
+                            + json.dumps(previous_owner))
+                reason = ('previous owner released' if lease.get('released')
+                          else 'previous owner dead' if same_host
+                          else 'foreign-host lease expired')
+                self.store.event('lease_reclaimed', {'previous': lease,
+                                                     'reason': reason})
+            owner = self._lease_owner_identity()
+            self._lease_token = uuid.uuid4().hex
+            lease = {'owner': owner, 'token': self._lease_token,
+                     'claimed_utc': utc(), 'renewed_utc': utc(),
                      'expires_utc': time.strftime(
                          '%Y-%m-%dT%H:%M:%S+00:00',
-                         time.gmtime(time.time() + ttl_seconds))}
+                         time.gmtime(time.time() + ttl))}
             atomic_write(lease_file, json.dumps(lease, indent=2))
             self.store.event('lease_claimed', {'owner': owner})
             return lease
 
-    def release(self) -> None:
-        lease_file = self.lease_path()
-        if lease_file.exists():
+    def renew(self, ttl_seconds: int = None) -> bool:
+        """Extend our lease; only the current token holder may do so."""
+        ttl = self.LEASE_TTL_SECONDS if ttl_seconds is None else ttl_seconds
+        token = getattr(self, '_lease_token', None)
+        if not token:
+            return False
+        lock_path = self.job_dir / 'private' / 'claim.lock'
+        with lock_path.open('a') as lock:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            lease_file = self.lease_path()
+            if not lease_file.exists():
+                return False
             lease = json.loads(lease_file.read_text())
+            if lease.get('token') != token or lease.get('released'):
+                self.store.event('lease_renew_refused',
+                                 {'reason': 'not the current owner'})
+                return False
+            lease['renewed_utc'] = utc()
+            lease['expires_utc'] = time.strftime(
+                '%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(time.time() + ttl))
+            atomic_write(lease_file, json.dumps(lease, indent=2))
+            return True
+
+    def release(self) -> None:
+        """Release the lease only if we are still the owning token."""
+        token = getattr(self, '_lease_token', None)
+        lock_path = self.job_dir / 'private' / 'claim.lock'
+        with lock_path.open('a') as lock:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            lease_file = self.lease_path()
+            if not lease_file.exists():
+                return
+            lease = json.loads(lease_file.read_text())
+            if token is not None and lease.get('token') != token:
+                # A replacement owner holds the lease; a stale owner must not
+                # disturb it.
+                self.store.event('lease_release_refused',
+                                 {'reason': 'not the current owner'})
+                return
             lease['released'] = True
             atomic_write(lease_file, json.dumps(lease, indent=2))
 
@@ -206,6 +282,8 @@ class Controller:
             served = set(worker.get('served_models') or [])
             served.add(outcome.served_model)
             worker['served_models'] = sorted(served)
+        if getattr(outcome, 'metadata', None):
+            worker['model_metadata'] = outcome.metadata
         checkpoint = job.setdefault('checkpoint', {})
         from pathlib import PurePosixPath
         checkpoint.update({'stage': job.get('stage'),
@@ -215,6 +293,44 @@ class Controller:
         self.store.charge('model', seconds=outcome.model_seconds, usd=outcome.usd or 0.0,
                           note='session')
         self.save_job(consumed=consumed, worker=worker, checkpoint=checkpoint)
+
+    def _recover_orphan_session(self) -> None:
+        """Charge crash-time model budget for a session that never ended.
+
+        If a process died mid-session its model time was never charged (the
+        charge happens after the session returns). On recovery, charge an
+        upper bound: the time since the orphaned session_started event,
+        capped by the per-session budget. Crashes must not silently forgive
+        model time.
+        """
+        import datetime
+        events = self.store.list_events()
+        started = None
+        for event in reversed(events):
+            if event['kind'] == 'session_ended':
+                break
+            if event['kind'] == 'session_started':
+                started = event
+                break
+        if not started:
+            return
+        started_at = started.get('session_started_utc') or ''
+        try:
+            begin = datetime.datetime.fromisoformat(started_at)
+        except (ValueError, TypeError):
+            return
+        now = datetime.datetime.now(datetime.timezone.utc)
+        elapsed = max(0.0, (now - begin).total_seconds())
+        cap = float(self.config['budgets']['model_session_seconds'])
+        charged = min(elapsed, cap)
+        self.store.charge('model', seconds=charged,
+                          note='crash-recovered session time (upper bound; '
+                               f'orphan started {started_at})')
+        consumed = self.job_state().setdefault('consumed', {})
+        consumed['model_seconds'] = consumed.get('model_seconds', 0.0) + charged
+        self.save_job(consumed=consumed)
+        self.store.event('session_recovered', {'charged_seconds': charged,
+                                               'orphan_started_utc': started_at})
 
     # -- main loop -----------------------------------------------------------------
     def run(self, *, max_sessions: int = None) -> dict:
@@ -238,6 +354,11 @@ class Controller:
                                             'utc': utc()})
                     self.store.event('terminal', {'stage': 'budget_exhausted',
                                                   'detail': str(exhausted)[:2000]})
+                    break
+                # Long jobs renew their lease continuously; if we lost
+                # ownership (a replacement took over), stop touching the job.
+                if not self.renew():
+                    self.store.event('ownership_lost', {})
                     break
                 marker = self._activity_fingerprint()
                 self._advance(stage)
@@ -275,9 +396,19 @@ class Controller:
             self._job = None
         return self.job_state()
 
+    # Events that are controller bookkeeping, not research activity: an empty
+    # session that only produces these must still count as no progress.
+    BOOKKEEPING_EVENTS = frozenset({
+        'session_started', 'session_ended', 'session_recovered', 'budget',
+        'provider_error', 'retry_wait', 'resume', 'terminal', 'ownership_lost',
+        'lease_claimed', 'lease_reclaimed', 'lease_renewed',
+        'lease_renew_refused', 'lease_release_refused'})
+
     def _activity_fingerprint(self) -> tuple:
+        research_events = [event for event in self.store.list_events()
+                           if event['kind'] not in self.BOOKKEEPING_EVENTS]
         return (len(self.store.list_experiments()), len(self.store.list_decisions()),
-                len(self.store.list_events()), len(self.store.list_sources()))
+                len(research_events), len(self.store.list_sources()))
 
     def _run_one_session(self) -> None:
         from .worker import run_session
@@ -289,11 +420,23 @@ class Controller:
         while True:
             transport = self.transport_factory(self.config)
             try:
+                # session_started/session_ended bracket every attempt so a
+                # crash mid-session leaves a recoverable orphan marker
+                # (unhandled exceptions propagate without session_ended).
+                self.store.event('session_started', {'utc': utc(),
+                                                     'session_started_utc': utc()})
                 outcome = run_session(self, transport)
+                self.store.event('session_ended',
+                                 {'model_seconds': outcome.model_seconds})
                 self._charge_session(outcome)
                 self._post_session()
                 return
             except ProviderRateLimit as limited:
+                self.store.event('session_ended', {'model_seconds': 0.0,
+                                                   'reason': 'provider_rate_limit'})
+                self.store.event('provider_error', {'class': 'rate_limit',
+                                                    'detail': str(limited)[:1000],
+                                                    'attempt': attempt + 1})
                 attempt += 1
                 job = self.job_state()
                 previous = job['stage']
@@ -316,6 +459,10 @@ class Controller:
                 self._sleep_bounded(wait)
                 self.save_job(stage=previous)
             except ProviderRefused as refused:
+                self.store.event('session_ended', {'model_seconds': 0.0,
+                                                   'reason': 'provider_refused'})
+                self.store.event('provider_error', {'class': 'refused',
+                                                    'detail': str(refused)[:1000]})
                 self.save_job(stage='infrastructure_blocked',
                               terminal={'reason': 'provider_refused',
                                         'detail': str(refused)[:2000], 'utc': utc()})
@@ -323,6 +470,8 @@ class Controller:
                                               'detail': str(refused)[:2000]})
                 return
             except BudgetExhausted as exhausted:
+                self.store.event('session_ended', {'model_seconds': 0.0,
+                                                   'reason': 'budget_exhausted'})
                 self.save_job(stage='budget_exhausted',
                               terminal={'reason': str(exhausted)[:2000], 'utc': utc()})
                 self.store.event('terminal', {'stage': 'budget_exhausted',
@@ -416,15 +565,32 @@ class Controller:
                                   'updated_utc': utc()})
 
     def _run_confirmation(self) -> None:
-        """Controller-owned independent confirmation with the final salt."""
+        """Controller-owned independent confirmation with the final salt.
+
+        Confirmation re-verifies the exact frozen development submission bytes
+        under the final salt; the generator never runs again, so numerical
+        nondeterminism cannot make the two checks see different submissions.
+        """
         job = self.job_state()
         candidate_bundle = job.get('checkpoint', {}).get('candidate_bundle')
         frozen = self._current_bundle()
         if candidate_bundle and candidate_bundle != frozen:
             raise ToolInfrastructureError(
                 'Artifact changed between development and confirmation; freeze first')
+        development_id = job.get('checkpoint', {}).get('development_experiment')
+        development = self.store.get_experiment(development_id) if development_id else None
+        if not development or development.get('status') != 'pass':
+            raise ToolInfrastructureError(
+                'Confirmation requires a PASSing development receipt first')
+        submission = (Path(development['log_path']).parent / 'submission'
+                      if development.get('log_path') else None)
+        if not submission or not submission.is_dir():
+            raise ToolInfrastructureError(
+                'The frozen development submission directory is missing; cannot '
+                'confirm without the exact bytes that passed development')
         params = {'which': 'confirmation',
-                  'protocol_sha256': self.adapter.protocol_sha256}
+                  'protocol_sha256': self.adapter.protocol_sha256,
+                  'submission_from': development['id']}
         identifier = experiment_id('confirmation_validation',
                                    self.adapter.protocol_sha256, frozen, params)
         existing = self.store.get_experiment(identifier)
@@ -440,7 +606,8 @@ class Controller:
         experiment.id = identifier
         started = time.monotonic()
         receipt = self.adapter.run_validation(
-            self.dispatcher.attempt, output, CONFIRMATION, self.config)
+            self.dispatcher.attempt, output, CONFIRMATION, self.config,
+            submission_dir=submission)
         engine = receipt.get('seconds') or 0.0
         experiment.status = 'pass' if receipt.get('status') == 'PASS' else 'fail'
         experiment.receipt = receipt
@@ -448,7 +615,8 @@ class Controller:
         experiment.metrics = {'combined_score': receipt.get('combined_score')}
         experiment.wall_seconds = time.monotonic() - started
         experiment.engine_seconds = float(engine)
-        experiment.conclusion = ('confirmation ' + experiment.status).upper()
+        experiment.conclusion = ('confirmation ' + experiment.status).upper() \
+            + (' (frozen development submission re-verified)' if receipt.get('status') == 'PASS' else '')
         experiment.log_excerpt = ''.join(str(t) for t in (receipt.get('logs') or {}).values())[-8000:]
         log_dir = self.job_dir / 'experiments' / f'confirmation-{identifier[:16]}'
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -493,8 +661,10 @@ class Controller:
     def resume(self) -> dict:
         """Recover a job after a crash/restart: budgets and artifacts preserved,
         completed experiments recovered from the store, duplicate sessions prevented
-        by lease reconciliation."""
+        by lease reconciliation, and crash-time model budget charged from the
+        orphaned session marker."""
         job = self.job_state()
+        self._recover_orphan_session()
         if job.get('stage') == 'retry_wait':
             retry = job.get('retry', {})
             self.save_job(stage=retry.get('resume_stage', 'researching'))

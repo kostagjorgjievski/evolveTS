@@ -74,9 +74,13 @@ def run_fixture_smoke() -> int:
         _check(results, 'receipt accepted by the task receipt adapter '
                         '(development_verified)', True)
 
+        # Confirmation re-verifies the exact frozen development submission
+        # under the final salt; the generator must not run again.
         confirm = task.run_validation(attempt, Path(temporary) / 'confirmation',
                                       'confirmation', {'validation': {
-                                          'final_salt_key': 'final_salt'}})
+                                          'final_salt_key': 'final_salt'}},
+                                      submission_dir=Path(temporary) / 'development'
+                                      / 'submission')
         _check(results, 'real confirmation validation under the final salt',
                confirm.get('status') == 'PASS' and confirm.get('held_out') is True
                and confirm.get('scope') == 'full-local-final'

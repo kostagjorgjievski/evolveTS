@@ -25,6 +25,15 @@ from scripts.autoresearch_seeder.testing import (BAD_DIAGNOSTIC, E2E_SCRIPT,
                                                   GENERATION_MD, GOOD_PROGRAM,
                                                   build_job, fake_fetcher,
                                                   fixture_repo, make_config)
+
+NONDET_PROGRAM = ('"""Nondeterministic demo candidate: equal cost, shuffled '
+                  'bytes."""\n'
+                  'import random, sys\nfrom pathlib import Path\n'
+                  'out = Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)\n'
+                  'lines = ["TRICK 40", "BASE 1"]\n'
+                  'random.shuffle(lines)\n'
+                  '(out / "submission.npz").write_text("\\n".join(lines) + "\\n")\n'
+                  'print(f"generation-run {random.random()}")\n')
 from scripts.autoresearch_seeder.transport import FakeTransport
 from scripts.autoresearch_seeder.store import ResearchStore
 
@@ -205,6 +214,65 @@ def test_process_liveness_uses_identity_not_pid_alone():
 # ---------------------------------------------------------------------------
 # Scenario 4: publishing gates.
 # ---------------------------------------------------------------------------
+def test_confirmation_reverifies_frozen_submission_not_regenerated(tmp_path):
+    """Regression: real numerical refits can emit different bytes from the
+    same source, so confirmation must re-verify the exact saved development
+    submission under the final salt instead of regenerating it."""
+    # 1. The generator is genuinely nondeterministic: two direct evaluations
+    #    of the same program produce different generation runs.
+    from scripts.autoresearch_seeder.adapter import TaskAdapter
+    from scripts.autoresearch_seeder.testing import GOOD_DIAGNOSTIC, fixture_repo
+    import tempfile
+    root = fixture_repo(tmp_path)
+    adapter = TaskAdapter('seed_demo', root)
+    with tempfile.TemporaryDirectory() as temporary:
+        attempt = Path(temporary) / 'attempt_00'
+        artifact = attempt / 'artifact'
+        artifact.mkdir(parents=True)
+        (artifact / 'program.py').write_text(NONDET_PROGRAM)
+        config = {'validation': {'development_salt_key': 'development_salt'}}
+        first = adapter.run_validation(attempt, Path(temporary) / 'one',
+                                       'development', config)
+        second = adapter.run_validation(attempt, Path(temporary) / 'two',
+                                        'development', config)
+        token_one = first['logs']['generator.log']
+        token_two = second['logs']['generator.log']
+        assert token_one != token_two            # regeneration WOULD be visible
+        assert first['official']['score'] == pytest.approx(
+            second['official']['score'])          # cost stays equal
+
+    # 2. Through the controller, generation happens exactly once and both
+    #    official checks see identical submission bytes.
+    script = [
+        {'tool_calls': [
+            {'name': 'fetch_source', 'arguments': {
+                'url': 'https://example.org/method', 'relevance': 'primary',
+                'license': 'MIT', 'attribution': 'Example Lab'}}]},
+        {'writes': {'artifact/diagnostic.py': GOOD_DIAGNOSTIC}},
+        {'tool_calls': [{'name': 'run_diagnostic', 'arguments': {}},
+                        {'name': 'record_decision', 'arguments': {
+                            'action': 'continue',
+                            'next_action': 'implement the nondeterministic '
+                                           'candidate and validate'}}]},
+        {'writes': {'artifact/program.py': NONDET_PROGRAM,
+                    'artifact/GENERATION.md': GENERATION_MD}},
+        {'tool_calls': [{'name': 'run_development_validation', 'arguments': {}},
+                        {'name': 'finish', 'arguments': {'reason': 'ready'}}]},
+    ]
+    controller = build_job(tmp_path, script)
+    final = controller.run()
+    assert final['stage'] == 'seed_ready'
+    development = controller.store.list_experiments('development_validation')[0]
+    confirmation = controller.store.list_experiments('confirmation_validation')[0]
+    assert 'generator.log' in development['receipt']['logs']
+    assert 'generator.log' not in confirmation['receipt'].get('logs', {}) \
+        or not confirmation['receipt']['logs'].get('generator.log')
+    assert confirmation['receipt'].get('submission_reused') is True
+    # Byte-identical frozen submission content across both official checks.
+    assert development['receipt']['submission_files_sha256'] == \
+        confirmation['receipt']['submission_files_sha256']
+
+
 def test_development_pass_confirmation_fail_cannot_publish(tmp_path):
     controller = build_job(tmp_path, E2E_SCRIPT)
     controller.run()
@@ -482,3 +550,46 @@ def test_experiment_idempotency_recovers_completed_results(tmp_path):
     assert first['status'] == 'ok' and first['result']['status'] == 'pass'
     assert again['result']['recovered'] is True
     assert executions == ['diagnostic']
+
+
+def test_bundle_hash_allows_nested_helper_directories(tmp_path):
+    """Regression: ordinary helper/module folders are legitimate bundle
+    members; only links and special files are forbidden."""
+    from scripts.autoresearch_seeder.models import bundle_hash
+
+    def put(base, relative, text):
+        path = base / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    artifact = tmp_path / 'artifact'
+    put(artifact, 'program.py', 'program\n')
+    put(artifact, 'helpers/__init__.py', '')
+    put(artifact, 'helpers/nested/deep.py', 'deep\n')
+    put(artifact, 'data/table.txt', '1 2 3\n')
+    value = bundle_hash(artifact)
+    assert len(value) == 64
+    # Deterministic across orderings of creation.
+    other = tmp_path / 'artifact2'
+    put(other, 'data/table.txt', '1 2 3\n')
+    put(other, 'helpers/nested/deep.py', 'deep\n')
+    put(other, 'program.py', 'program\n')
+    put(other, 'helpers/__init__.py', '')
+    assert bundle_hash(other) == value
+    # A file symlink is still rejected, as is a directory symlink and a
+    # hard-linked file.
+    (artifact / 'helpers' / 'linked.py').symlink_to(artifact / 'program.py')
+    with pytest.raises(ValueError, match='symlinks'):
+        bundle_hash(artifact)
+    (artifact / 'helpers' / 'linked.py').unlink()
+    (artifact / 'outside_dir').symlink_to(tmp_path / 'artifact2',
+                                          target_is_directory=True)
+    with pytest.raises(ValueError, match='symlinks'):
+        bundle_hash(artifact)
+    (artifact / 'outside_dir').unlink()
+    hard = artifact / 'helpers' / 'hard.py'
+    hard.write_text('hard linked content\n')
+    import os
+    os.link(hard, artifact / 'helpers' / 'hard2.py')
+    with pytest.raises(ValueError, match='hard links'):
+        bundle_hash(artifact)

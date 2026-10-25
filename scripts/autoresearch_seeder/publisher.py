@@ -153,11 +153,66 @@ def _seed_id(controller, gates) -> str:
     return 'seed-' + controller.adapter.task_id + '-' + digest(core)[:16]
 
 
+def seal_export(seed_dir) -> dict:
+    """Hash-seal every file by its path RELATIVE to the seed directory.
+
+    Relative paths are required: different subdirectories legitimately contain
+    files with the same basename (e.g. submission/development/submission.npz
+    and submission/confirmation/submission.npz), and a basename-keyed seal
+    silently loses the duplicates. SEAL.json itself is written after the
+    enumeration and therefore seals every other file.
+    """
+    seed_dir = Path(seed_dir)
+    files = {path.relative_to(seed_dir).as_posix(): file_digest(path)
+             for path in sorted(seed_dir.rglob('*'))
+             if path.is_file() and path.name != 'SEAL.json'}
+    seal = {'files': files, 'file_count': len(files), 'sealed_utc': utc(),
+            'note': 'Keys are paths relative to the seed directory.'}
+    (seed_dir / 'SEAL.json').write_text(json.dumps(seal, indent=2, sort_keys=True) + '\n')
+    return seal
+
+
+def verify_export(seed_dir) -> dict:
+    """Independently verify a sealed export: every current file matches its
+    sealed hash, no unexpected files exist, and the required members are
+    present. Publication only succeeds when this passes."""
+    seed_dir = Path(seed_dir)
+    seal_path = seed_dir / 'SEAL.json'
+    if not seal_path.is_file():
+        return {'ok': False, 'issues': ['SEAL.json missing (interrupted publication?)']}
+    seal = json.loads(seal_path.read_text())
+    issues = []
+    expected = {'MANIFEST.json', 'SOURCES.json', 'LICENSE-STATUS.md'}
+    for member in expected:
+        if member not in seal['files']:
+            issues.append(f'sealed export is missing {member}')
+    if 'source-bundle/' not in ''.join(seal['files']):
+        issues.append('sealed export is missing the source bundle')
+    current = {path.relative_to(seed_dir).as_posix()
+               for path in seed_dir.rglob('*')
+               if path.is_file() and path.name != 'SEAL.json'}
+    for relative in sorted(current):
+        if relative not in seal['files']:
+            issues.append(f'unsealed file present: {relative}')
+            continue
+        if file_digest(seed_dir / relative) != seal['files'][relative]:
+            issues.append(f'file tampered or changed after sealing: {relative}')
+    for relative in seal['files']:
+        if relative not in current:
+            issues.append(f'sealed file deleted: {relative}')
+    if len(current) != len(seal['files']):
+        issues.append(f"file count mismatch: {len(current)} present, "
+                      f"{len(seal['files'])} sealed")
+    return {'ok': not issues, 'issues': issues}
+
+
 def publish(controller, export: bool = True, force: bool = False) -> dict:
     """Evaluate gates; when accepted, write an immutable export under exports/.
 
     A failed gate evaluation is recorded as a rejection receipt (sample-able),
-    never as a published claim.
+    never as a published claim. Success is returned only after the sealed
+    export passes independent verification; an existing-but-unsealed directory
+    (interrupted publication) is completed rather than trusted.
     """
     gates = evaluate_gates(controller)
     exports = controller.job_dir / 'exports'
@@ -175,12 +230,20 @@ def publish(controller, export: bool = True, force: bool = False) -> dict:
 
     seed_id = _seed_id(controller, gates)
     seed_dir = exports / seed_id
-    if seed_dir.exists():
-        if not force:
+    interrupted = seed_dir.exists() and not verify_export(seed_dir)['ok']
+    if seed_dir.exists() and not interrupted and not force:
+        verification = verify_export(seed_dir)
+        if verification['ok']:
             return {'accepted': True, 'seed_id': seed_id, 'export': str(seed_dir),
-                    'existing': True,
-                    'reasons': ['Seed already exported; immutable']}
-    else:
+                    'existing': True, 'verified': True,
+                    'reasons': ['Seed already exported; immutable and verified']}
+        interrupted = True
+    if interrupted:
+        controller.store.event('publish_interrupted_recovered',
+                               {'seed_id': seed_id,
+                                'issues': verify_export(seed_dir)['issues']})
+        shutil.rmtree(seed_dir)
+    if not seed_dir.exists():
         seed_dir.mkdir()
         evidence = gates['evidence']
         # Frozen copies: source bundle, both receipts, frozen submission content.
@@ -232,10 +295,15 @@ def publish(controller, export: bool = True, force: bool = False) -> dict:
             'created_utc': utc(),
         }
         (seed_dir / 'MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
-        seal = {'files': {path.name: file_digest(path)
-                          for path in sorted(seed_dir.rglob('*')) if path.is_file()},
-                'sealed_utc': utc()}
-        (seed_dir / 'SEAL.json').write_text(json.dumps(seal, indent=2) + '\n')
-        controller.store.event('seed_published', {'seed_id': seed_id,
-                                                  'export': str(seed_dir)})
-    return {'accepted': True, 'seed_id': seed_id, 'export': str(seed_dir)}
+        seal_export(seed_dir)
+    verification = verify_export(seed_dir)
+    if not verification['ok']:
+        controller.store.event('seed_publish_failed', {'seed_id': seed_id,
+                                                        'issues': verification['issues']})
+        return {'accepted': False, 'seed_id': seed_id, 'export': str(seed_dir),
+                'reasons': verification['issues']}
+    controller.store.event('seed_published', {'seed_id': seed_id,
+                                              'export': str(seed_dir),
+                                              'verified': True})
+    return {'accepted': True, 'seed_id': seed_id, 'export': str(seed_dir),
+            'verified': True}

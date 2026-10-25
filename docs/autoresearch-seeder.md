@@ -28,9 +28,11 @@ All new code lives in `scripts/autoresearch_seeder/`:
 | `store.py` | Job-scoped SQLite/WAL research store — sources, hypotheses, experiments, decisions, events, budget ledger |
 | `adapter.py` | Task contract loader over the existing `tasks/<id>/library.json` registry; trusted diagnostic/validation wrappers with candidate-vs-infrastructure failure classification |
 | `tools.py` | The worker tool dispatcher (search, fetch, propose, decide, diagnose, validate, report-access, claim, finish) shared by offline tests and the live MCP server |
-| `transport.py` | Deterministic `FakeTransport` for tests; SDK-backed `RealTransport` (lazy imports) |
+| `transport.py` | Deterministic `FakeTransport` for tests; SDK-backed `RealTransport` (Claude Code backend, lazy imports) |
+| `backends.py` | Backend abstraction (`Backend`, `session_metadata`), validated MCP-server interpreter/env, and the optional `HermesBackend` (Hermes Agent CLI) |
 | `worker.py` | One research session: prepared context -> batched tool loop -> accounted outcome |
 | `controller.py` | Durable job state, atomic leases, budget enforcement, stage machine, recovery |
+| `scheduler.py` | Bounded, disabled-by-default single-pass scheduler over eligible queued jobs |
 | `publisher.py` | Machine-checkable acceptance gates and immutable seed export |
 | `context.py` | Prepared-context construction for fresh conversations |
 | `mcp_server.py` | stdio MCP shim exposing the dispatcher to a live model session |
@@ -136,6 +138,39 @@ state and never reset. `preflight` must pass (offline checks always; with
 `--live`, credential presence without reading or printing token contents)
 before `run` will start a paid session.
 
+## Researcher backends
+
+`provider.backend` selects how a model session talks to the seeder's tools.
+Both backends spawn the SAME dispatcher MCP server under the SAME validated
+interpreter, so scoring, validation, budgets and receipts are recorded by
+trusted code in both cases; the backend only changes the agent runtime that
+drives the session.
+
+- **`claude_code`** (default) — `transport.RealTransport`, a
+  `claude_agent_sdk` session against the Claude Code CLI. Provider
+  configuration comes from the credential env file (`ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`), with an isolated per-job
+  `CLAUDE_CONFIG_DIR`.
+- **`hermes`** — `backends.HermesBackend`, driving the Hermes Agent CLI
+  (Nous Research; pinned release **v0.22.5**, commit `bf0203a`, official
+  docs at hermes-agent.nousresearch.com verified 2026-10-25). Invoked
+  headless as `hermes chat --oneshot --quiet --format stream-json
+  --usage-file … --query-file … --provider custom:<name> -m <model>
+  --ignore-rules --in <worker dir>`. Each job gets its own isolated
+  `HERMES_HOME` (`private/hermes-home/`: `config.yaml` + 0600 `.env`), so no
+  Hermes memory, session or setting is shared between jobs. The GLM endpoint
+  is registered as a named custom provider with the `anthropic_messages`
+  transport; requested effort goes in `agent.reasoning_effort`. Requires the
+  Hermes CLI on the machine (preflight reports the exact prerequisite and the
+  version probe); nothing is auto-installed, and there is no silent model
+  fallback (the requested model is passed explicitly; requested-vs-served is
+  recorded in job metadata, effort is never claimed attested).
+
+Backend selection is per job config; an unknown value fails factory
+construction immediately. `preflight --live` runs the selected backend's own
+checks (credential presence, CLI presence/version, isolated home generation,
+MCP interpreter) in addition to the task-level checks.
+
 ## Filesystem and CLI
 
 Jobs live at `runs/autoresearch-seeder/<task>/<job-id>/` with `sources/`,
@@ -151,7 +186,18 @@ python -m scripts.autoresearch_seeder status --job <path>
 python -m scripts.autoresearch_seeder export --job <path>
 python -m scripts.autoresearch_seeder selftest [--fixture | --task dfthcsos]
 python -m scripts.autoresearch_seeder sample-export --output docs/autoresearch-seeder/samples
+python -m scripts.autoresearch_seeder schedule [--run-root runs] [--loop-passes N] [--sleep-seconds S]
 ```
+
+`schedule` is the bounded scheduler: a single pass scans
+`<run-root>/autoresearch-seeder/*/*/job.json`, starts at most the oldest
+ELIGIBLE job (`queued`, or `retry_wait` past its deadline, config enabled,
+not terminal/active), and exits. Idle checks are pure filesystem reads —
+no transport is constructed, no model is called. Starting still goes through
+the controller's lease claim (duplicate starts impossible with a live owner)
+and `run`'s enabled/preflight gating. `--loop-passes` bounds repeated passes
+and stops early once no eligible work remains; there is no daemon, and the
+scheduler is not registered anywhere as a recurring job.
 
 `init` copies the official seed program unchanged into the job's
 `worker/attempt_00/artifact/program.py` (the frozen fallback). `--task-root`
@@ -194,6 +240,29 @@ while research continues elsewhere.
   same `library.json`/evaluator/diagnose/receipt contract with a real
   `sandbox-exec` profile and deterministic salt-dependent scoring. It is a
   test fixture, not a benchmark.
+- `tests/test_seeder_mcp.py` — the MCP server over a REAL stdio client
+  session: initialize, tool discovery, executing a diagnostic through the
+  wire, durable store effects, unknown-job rejection.
+- `tests/test_seeder_leases.py` — lease ownership with two real OS
+  processes: expiry never overrides a live owner, PID-reuse detection,
+  token-gated release, stale owners cannot release the replacement's lease.
+- `tests/test_seeder_export.py` — seal covers full relative paths (duplicate
+  basenames included), tamper detection, interrupted-publication recovery,
+  immutability of verified exports.
+- `tests/test_seeder_accounting.py` — crash-time orphan-session charging
+  (bounded by session budget), provider-error events, honest model/effort
+  metadata, cost-enforcement caveat in status.
+- `tests/test_seeder_backends.py` — backend selection factory, Hermes
+  profile generation/isolation (two jobs share nothing), preflight honesty
+  (missing binary/credential/model fail clearly, no secrets in output), and
+  the FULL Hermes run path against a scripted fake `hermes` binary (CLI
+  surface, isolated HERMES_HOME, stream-json parsing, usage accounting,
+  wall-clock kill on session-budget overrun, provider-error classification).
+  The real-Hermes discovery test skips with an explicit machine prerequisite
+  when the CLI is absent.
+- `tests/test_seeder_scheduler.py` — eligibility from durable state only,
+  idle checks construct no transport, lease-guarded start, busy-owner skip,
+  finished jobs never rescheduled, disabled-config block, bounded loop.
 - `python -m scripts.autoresearch_seeder selftest --fixture` — the standalone
   smoke command (identical checks to the pytest smoke).
 
@@ -207,10 +276,12 @@ regenerated deterministically into `docs/autoresearch-seeder/samples/`.
    calibration) and verify `selftest --task dfthcsos` passes.
 2. Create a real config with `enabled: true`, complete budgets, provider
    credential file, and the intended `blocked_hosts`.
-3. `init` + `preflight --live`, then `run` (this starts a paid MiniMax
+3. `init` + `preflight --live`, then `run` (this starts a paid model
    session). `status`/`export` afterwards; `resume` after interruption.
 4. Measure verified gain, model/queue/execution/wall time, searches, useful
    sources, attempts, failures, recovery and SDK-reported usage (billing
    caveat: SDK cost is not independently reconciled).
+5. For the backend comparison, follow `docs/autoresearch-seeder-comparison.md`
+   (both arm configs are shipped DISABLED; no comparison session has run).
 
 No live pilot was started as part of this implementation.

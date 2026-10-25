@@ -125,23 +125,40 @@ class TaskAdapter:
         return receipt
 
     def run_validation(self, attempt_dir, output_dir, which: str, config: dict,
-                       timeout_seconds: int = 4 * 3600) -> dict:
-        """Unchanged official verification of the attempt's frozen candidate."""
+                       timeout_seconds: int = 4 * 3600,
+                       submission_dir=None) -> dict:
+        """Unchanged official verification of the attempt's frozen candidate.
+
+        For confirmation, `submission_dir` must point at the exact frozen
+        development submission: the independent check re-verifies those saved
+        bytes under the final salt WITHOUT regenerating from source, because a
+        real numerical refit can produce different bytes from identical
+        source. Both receipts are preserved by the caller.
+        """
         attempt = Path(attempt_dir).resolve()
         program = attempt / self.candidate_file
         output = Path(output_dir).resolve()
         if output.exists():
             raise ToolInfrastructureError(f'Validation output already exists: {output}')
+        submission = Path(submission_dir).resolve() if submission_dir else None
+        if which == CONFIRMATION:
+            if submission is None or not submission.is_dir():
+                raise ToolInfrastructureError(
+                    'Confirmation requires the frozen development submission '
+                    'directory; it must not regenerate from source')
         salt = self.salt(which, config)
         evaluator = self._task_module('evaluator')
         try:
-            receipt = evaluator.evaluate_program(program, output, smoke=False, salt=salt)
+            receipt = evaluator.evaluate_program(program, output, smoke=False,
+                                                 salt=salt, submission=submission)
         except Exception as exc:
             receipt = self._classify(exc)
         if which == CONFIRMATION:
             # Envelope labels exactly as the task's library_validate --held-out uses.
             receipt['held_out'] = True
             receipt['scope'] = 'full-local-final'
+            if submission is not None and receipt.get('status') == 'PASS':
+                receipt['submission_reused'] = True
         else:
             receipt['scope'] = 'full-development'
         receipt['salt'] = salt

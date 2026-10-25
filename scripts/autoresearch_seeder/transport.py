@@ -52,9 +52,18 @@ class FakeTransport:
       {'finish': 'reason'}                    the model ends the session
     An exhausted script ends the session with finished_reason 'done'.
     """
-    def __init__(self, script):
+    def __init__(self, script, requested_model='FakeModel-1',
+                 requested_effort='medium'):
         self.script = list(script)
         self.prompts = []
+        self.requested_model = requested_model
+        self.requested_effort = requested_effort
+        self.served_models = []
+
+    def metadata(self):
+        from .backends import session_metadata
+        return session_metadata(self.requested_model, self.requested_effort,
+                                self.served_models)
 
     def run(self, prompt, tools, workspace, budget):
         self.prompts.append(prompt)
@@ -79,6 +88,8 @@ class FakeTransport:
         result.served_model = step.get('served_model', 'fake-model')
         result.session_id = step.get('session_id', 'fake-session')
         result.model_seconds = step.get('model_seconds', 0.001)
+        if result.served_model not in self.served_models:
+            self.served_models.append(result.served_model)
         return result
 
 
@@ -86,55 +97,76 @@ class RealTransport:
     """claude_agent_sdk session; tools execute inside the MCP dispatcher child.
 
     The dispatcher (mcp_server.py) shares the job store, so the controller
-    observes experiments/budgets durably even if this process dies.
+    observes experiments/budgets durably even if this process dies. The MCP
+    server runs under an explicitly validated interpreter, and credentials
+    resolve from an explicit application root — never from job-dir arithmetic.
     """
-    def __init__(self, provider_config, job_dir, mcp_server_script=None, cli_path=None,
-                 max_turns=1000):
+    def __init__(self, provider_config, job_dir, app_root=None,
+                 mcp_server_script=None, cli_path=None, max_turns=1000):
         self.provider = provider_config
         self.job_dir = Path(job_dir)
+        self.app_root = Path(app_root) if app_root else ROOT
         self.mcp_server_script = Path(mcp_server_script or
                                       Path(__file__).with_name('mcp_server.py'))
         self.cli_path = cli_path or str(Path.home() / '.local/bin/claude')
         self.max_turns = max_turns
+        self.served_models = []
+        from .backends import credential_path
+        self.credential_file = credential_path(
+            self.app_root, provider_config['credential_file'])
 
-    @staticmethod
-    def environment(path):
-        """Parse an env file the way run_worker.environment does."""
-        import shlex
-        result = {}
-        for line in Path(path).read_text().splitlines():
-            line = line.strip()
-            if line.startswith('export '):
-                line = line[7:]
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, value = line.split('=', 1)
-            if key.replace('_', '').isalnum():
-                fields = shlex.split(value, comments=True)
-                if len(fields) == 1:
-                    result[key] = fields[0]
-        return result
+    def preflight(self) -> list:
+        checks = []
+        if not self.credential_file.is_file():
+            checks.append({'check': f'credential file present '
+                                    f'({self.credential_file})', 'ok': False,
+                           'detail': 'Configure the provider credential file; '
+                                     'contents are never printed'})
+        else:
+            checks.append({'check': f'credential file present '
+                                    f'({self.credential_file})', 'ok': True})
+        cli = Path(self.cli_path)
+        checks.append({'check': f'claude CLI present ({cli})', 'ok': cli.is_file(),
+                       'detail': '' if cli.is_file()
+                       else 'Install the Claude Code CLI or point cli_path at it'})
+        try:
+            import claude_agent_sdk  # noqa: F401
+            checks.append({'check': 'claude_agent_sdk importable', 'ok': True})
+        except ImportError as exc:
+            checks.append({'check': 'claude_agent_sdk importable', 'ok': False,
+                           'detail': str(exc)})
+        return checks
+
+    def metadata(self):
+        from .backends import session_metadata
+        return session_metadata(
+            self.provider.get('requested_model'),
+            self.provider.get('requested_effort'),
+            self.served_models)
 
     def run(self, prompt, tools, workspace, budget):
         import asyncio
         import dataclasses
         import os
         import claude_agent_sdk as sdk
+        from .backends import mcp_server_command
 
-        root = self.job_dir.parents[2] if len(self.job_dir.parents) > 2 else Path.cwd()
-        env_config = self.environment(root / self.provider['credential_file'])
+        env_config = load_environment(self.credential_file) \
+            if self.credential_file.is_file() else {}
         token = env_config.get('ANTHROPIC_AUTH_TOKEN')
         if not token:
-            raise ProviderRefused('No worker credential configured')
+            raise ProviderRefused(
+                'No worker credential configured at ' + str(self.credential_file))
         model = env_config.get('ANTHROPIC_MODEL', self.provider.get('requested_model'))
         auth = self.job_dir / 'private' / 'auth'
         auth.mkdir(mode=0o700, parents=True, exist_ok=True)
         mcp = auth / 'mcp.json'
+        from .backends import server_env
+        server = mcp_server_command(self.job_dir, self.app_root)
         mcp.write_text(json.dumps({'mcpServers': {'seeder': {
-            'command': '/usr/bin/env',
-            'args': ['-i', 'PATH=/usr/bin:/bin', 'HOME=/nonexistent',
-                     'PYTHONDONTWRITEBYTECODE=1', str(Path.cwd().joinpath('python3')),
-                     str(self.mcp_server_script), str(self.job_dir)]}}}))
+            'command': server[0],
+            'args': server[1:],
+            'env': server_env(self.app_root)}}}))
         mcp.chmod(0o600)
         env = dict(env_config)
         env.update(CLAUDE_CONFIG_DIR=str(auth / 'cli'),
@@ -181,6 +213,8 @@ class RealTransport:
                 if isinstance(message, sdk.AssistantMessage):
                     if getattr(message, 'model', None):
                         result.served_model = message.model
+                        if message.model not in self.served_models:
+                            self.served_models.append(message.model)
                     if getattr(message, 'error', None):
                         raise RuntimeError(str(message.error))
                 if isinstance(message, sdk.ResultMessage):

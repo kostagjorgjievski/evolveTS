@@ -3,6 +3,7 @@
   "enabled": false,
   "task": "dfthcsos",
   "provider": {
+    "backend": "claude_code",
     "name": "minimax",
     "credential_file": ".credentials/minimax.env",
     "requested_model": "MiniMax-M3.1-Flash[1m]",
@@ -38,5 +39,5 @@
   "production": {
     "automatic_enable": false
   },
-  "_comment": "DISABLED EXAMPLE. This example intentionally ships with enabled=false. A live start requires every budget above present and finite, an enabled=true config and a passing preflight. The blocked_hosts list preserves the existing saved Kaggle access restriction; blocked sources are recorded as needs_access, never bypassed. No known chemistry solution or improved public artifact is included, keeping a later blind evaluation possible."
+  "_comment": "DISABLED EXAMPLE. provider.backend selects the researcher backend: claude_code (default) or hermes (requires the Hermes CLI; see docs/autoresearch-seeder.md).  This example intentionally ships with enabled=false. A live start requires every budget above present and finite, an enabled=true config and a passing preflight. The blocked_hosts list preserves the existing saved Kaggle access restriction; blocked sources are recorded as needs_access, never bypassed. No known chemistry solution or improved public artifact is included, keeping a later blind evaluation possible."
 }

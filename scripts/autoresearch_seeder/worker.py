@@ -104,6 +104,12 @@ def run_session(controller, transport) -> SessionOutcome:
             finished_reason = 'budget_exhausted'
             break
     model_seconds = time.monotonic() - session_started
+    metadata = {}
+    if hasattr(transport, 'metadata'):
+        try:
+            metadata = transport.metadata() or {}
+        except Exception:
+            metadata = {}
     return SessionOutcome(
         model_seconds=model_seconds,
         usd=usage_total,
@@ -113,4 +119,5 @@ def run_session(controller, transport) -> SessionOutcome:
         session_id=session_id,
         finished_reason=finished_reason,
         prompt_path=str(context_path),
+        metadata=metadata,
     )

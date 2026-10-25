@@ -139,6 +139,20 @@ def cmd_preflight(args):
                         and len(line.split('=', 1)[1].strip().strip('"').strip("'")) > 8:
                     token_present = True
         record('provider token set (not printed)', token_present)
+        backend_name = config['provider'].get('backend', 'claude_code')
+        record('researcher backend selected',
+               backend_name in ('claude_code', 'hermes'),
+               f"provider.backend={backend_name!r} (claude_code default)")
+        if backend_name == 'hermes':
+            try:
+                from .backends import HermesBackend
+                backend = HermesBackend(config['provider'],
+                                        Path(args.job).resolve(), app_root=ROOT)
+                for check in backend.preflight():
+                    record(f"hermes: {check['check']}", check['ok'],
+                           check.get('detail', ''))
+            except Exception as exc:
+                record('hermes backend constructible', False, str(exc)[:500])
     ok = all(check['ok'] for check in checks)
     result = {'ok': ok, 'checks': checks, 'job': str(Path(args.job).resolve()),
               'production_enabled': False, 'checked_utc': utc()}
@@ -170,9 +184,20 @@ def cmd_run(args):
 
 
 def _transport_factory_for(args):
+    job_dir = Path(args.job).resolve()
+
     def factory(config):
-        from .transport import RealTransport
-        return RealTransport(config['provider'], Path(args.job).resolve())
+        provider = config['provider']
+        backend = provider.get('backend', 'claude_code')
+        if backend == 'hermes':
+            from .backends import HermesBackend
+            return HermesBackend(provider, job_dir, app_root=ROOT)
+        if backend == 'claude_code':
+            from .transport import RealTransport
+            return RealTransport(provider, job_dir, app_root=ROOT)
+        raise SystemExit(
+            f"Unknown researcher backend {backend!r}; expected 'claude_code' or "
+            "'hermes' in provider.backend")
     return factory
 
 
@@ -197,6 +222,18 @@ def _status(controller):
     return {'job_id': job['job_id'], 'task': job['task'], 'stage': job['stage'],
             'terminal': job.get('terminal'), 'consumed': controller.consumed(),
             'budgets': controller.config.get('budgets'),
+            'model_metadata': job.get('worker', {}).get(
+                'model_metadata', {'requested_model': job.get('worker', {}).get(
+                    'requested_model'),
+                    'requested_effort': job.get('worker', {}).get('requested_effort'),
+                    'served_models': job.get('worker', {}).get('served_models', []),
+                    'effort_attested': False}),
+            'provider_errors': [event for event in
+                                controller.store.list_events('provider_error')],
+            'cost_enforcement': 'Cost caps are enforced against accumulated '
+                                'SDK-reported session costs only (post-hoc, not a '
+                                'real-time spend limit); provider billing is not '
+                                'independently reconciled.',
             'experiments': [{'kind': e['kind'], 'status': e['status'],
                              'score': (e.get('metrics') or {}).get('combined_score'),
                              'id': e['id'][:16]}
@@ -230,6 +267,22 @@ def cmd_sample_export(args):
     from .samples import generate_samples
     generate_samples(Path(args.output))
     return 0
+
+
+def cmd_schedule(args):
+    from .scheduler import schedule
+    outcomes = schedule(args.run_root, loop_passes=args.loop_passes,
+                        sleep_seconds=args.sleep_seconds)
+    print(json.dumps({'bounded': True, 'outcomes': outcomes,
+                      'passes': len(outcomes)}, indent=2))
+    return 0
+
+
+SCHEDULER_NOTICE = (
+    'The scheduler runs a bounded number of passes and exits; it is not a '
+    'daemon. Eligibility checks are pure filesystem reads and never start a '
+    'model session. Starting a job still requires the job config enabled=true '
+    'and goes through the lease claim, so duplicate starts are impossible.')
 
 
 def main(argv=None):
@@ -282,6 +335,15 @@ def main(argv=None):
                              help='Regenerate sample artifacts into a directory')
     samples.add_argument('--output', required=True)
     samples.set_defaults(func=cmd_sample_export)
+
+    schedule = sub.add_parser('schedule',
+                              help='Bounded pass: start one eligible queued job',
+                              description=SCHEDULER_NOTICE)
+    schedule.add_argument('--loop-passes', type=int, default=1,
+                          help='Maximum passes (default 1; stops early when idle)')
+    schedule.add_argument('--sleep-seconds', type=float, default=300.0,
+                          help='Sleep between passes when work remains')
+    schedule.set_defaults(func=cmd_schedule)
 
     args = parser.parse_args(argv)
     return args.func(args)
