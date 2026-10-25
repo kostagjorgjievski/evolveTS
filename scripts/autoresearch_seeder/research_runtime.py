@@ -172,7 +172,13 @@ def run_materialized_investigation(agenda, record, knowledge, research):
     root = Path(research['root'])
     job = _create_job(root, record, research)
     controller, _, _ = _load_controller(job)
-    role = 'scout' if not controller.store.list_hypotheses() else 'reproducer'
+    # The scout gets one saved window, then hands its complete durable state
+    # to the reproducer even if it omitted a structured hypothesis call.
+    # Otherwise an exploratory scout can monopolize every checkpoint and
+    # prevent the stronger implementation/checking role from ever starting.
+    scout_window_finished = (record['consumed']['sessions'] > 0
+                             and record.get('checkpoint', {}).get('role') in ('scout', 'reproducer'))
+    role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished else 'scout'
     _close(controller)
     provider = copy.deepcopy(research['provider'] if role == 'scout'
                              else research.get('reproducer', research['provider']))

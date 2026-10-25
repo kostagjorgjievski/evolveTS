@@ -257,3 +257,28 @@ def test_approved_agenda_budget_reload_keeps_consumption_and_artifact(tmp_path):
     store=ResearchStore(job/'private/research.sqlite')
     assert store.totals()['model']['seconds']==7
     store.close();agenda.close()
+
+
+@pytest.mark.parametrize('previous_role',['scout','reproducer'])
+def test_scout_window_hands_off_even_without_structured_hypothesis(tmp_path, previous_role):
+    scaffold=build_job(tmp_path,E2E_SCRIPT)
+    root=tmp_path/'research';root.mkdir()
+    agenda=Investigations(root/'investigations.sqlite');knowledge=KnowledgeBase(root/'knowledge.sqlite')
+    item=agenda.create('Scout source research without structured metadata',budgets={'max_model_seconds':60})
+    item['consumed']['sessions']=1
+    item['checkpoint']['role']=previous_role
+    provider={'name':'test','credential_file':str(tmp_path/'unused.env'),'requested_model':'FakeModel-1'}
+    runtime={'root':str(root),'task':'seed_demo','task_root':str(scaffold.adapter.root),
+             'provider':provider,'reproducer':provider,
+             'test_transport_factory':lambda _:scaffold.shared_transport,'test_search_service':FakeSearch()}
+    from scripts.autoresearch_seeder.research_runtime import _create_job
+    from scripts.autoresearch_seeder.__main__ import _load_controller
+    from scripts.autoresearch_seeder.research_runtime import _close
+    job=_create_job(root,item,runtime)
+    controller,_,_=_load_controller(job)
+    assert controller.store.list_hypotheses()==[]
+    _close(controller)
+    runtime['test_fetcher']=fake_fetcher(job,scaffold.config)
+    result=run_materialized_investigation(agenda,item,knowledge,runtime)
+    assert result['checkpoint']['role']=='reproducer'
+    agenda.close();knowledge.close()
