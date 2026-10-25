@@ -16,12 +16,13 @@ Repository: `kostagjorgjievski/evolveTS`. Full architecture documentation:
 
 ## Phase 2 — review fixes, Hermes backend, comparison preparation
 
-Phase 2 continues from phase-1 commit `a226827` after Codex's Mac Mini
-review (40 tests, zero skips there, including real chemistry; the blocking
-findings below were outside that suite). All six findings are fixed with
-regression tests, Hermes is an optional researcher backend, the scheduler is
-bounded and disabled by default, and the backend comparison is prepared but
-NOT started.
+Phase 2 code commit: **`4e79cda`** on `implementation/autoresearch-seeder`
+(this documentation-only commit sits on top of it). Phase 2 continues from
+phase-1 commit `a226827` after Codex's Mac Mini review (40 tests, zero skips
+there, including real chemistry; the blocking findings below were outside
+that suite). All six findings are fixed with regression tests, Hermes is an
+optional researcher backend, the scheduler is bounded and disabled by
+default, and the backend comparison is prepared but NOT started.
 
 ### The six review findings and their fixes
 
