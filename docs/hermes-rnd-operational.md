@@ -103,10 +103,33 @@ fixture controller publication, actual sandbox diagnostics and denial of private
 reads, cold-source isolation, deferred grading, immutable source revisions, scoped
 handoffs, retries, budget accounting and pause/idle behavior. Real MiniMax and Kimi
 MCP smoke runs verified scoped tools and an actual sandbox diagnostic. Fixture
-success does not replace the outstanding blind-source official reproduction.
+success does not replace official reproduction. The fresh reproduction below
+subsequently passed those official gates.
 
 The overnight monitor records meaningful results and repairs infrastructure every
 20 minutes. It must not submit to Kaggle, install seeds into campaigns, change
 scoring/verifiers, resume paused campaigns or start E1. Preserve drafts and receipts
 on failures and report unresolved failures without attributing tooling faults to
 model ability.
+
+## Fresh-source acceptance completed
+
+The Anazemcev notebook discovered by MiniMax was reproduced by the MiniMax scout
+and Kimi reproducer without the old supplied bundle or prior library seed. Kimi
+corrected the source payload interpretation, generated circuits and requested
+full grading. Both unchanged official 64-shot/address checks passed at chemistry
+reward **4.146047074378709** (cost 809349128.9696412), on identical nine submission
+files and 36608 verified shots per salt. The immutable export is
+`seed-dfthcsos-133078a2b42f7d35`. Model development consumed about 26.3 minutes
+across two sessions; the separate blind discovery took about 12.1 minutes. This
+is public-method reproduction, not a claim of a novel algorithm or Kaggle score.
+
+The monitor verified its export seal and exact submission identities, then
+activated the approved four-hour/twelve-session investigation and twelve-hour/
+thirty-six-session daily limits without resetting consumed usage. An omitted
+optional hypothesis `source_urls` field exposed a registry integration fault:
+the publisher exported a valid seed, but the library did not advertise it. The
+bridge now accepts the publisher-gated sealed source manifest as authoritative
+provenance for an already verified seed. Limited diagnostic findings still
+require explicit hypothesis-to-source linkage. The exact existing export was
+registered idempotently, without rerunning grading or altering candidate code.

@@ -27,7 +27,10 @@ def _create_job(root, record, research):
         data=json.loads((job/'job.json').read_text())
         config_path=Path(data['config_path'])
         existing=json.loads(config_path.read_text())
-        if not existing.get('validation',{}).get('deferred_development'):
+        target_budgets = {'model_session_seconds': record['budgets']['max_model_seconds'],
+                          'max_total_cost_usd': record['budgets']['max_usd']}
+        budget_changed = any(existing['budgets'].get(k) != v for k, v in target_budgets.items())
+        if not existing.get('validation',{}).get('deferred_development') or budget_changed:
             from .controller import _process_alive
             lease_path=job/'private/lease.json'
             lease=json.loads(lease_path.read_text()) if lease_path.exists() else {}
@@ -37,12 +40,15 @@ def _create_job(root, record, research):
             from .store import ResearchStore
             before=digest(existing)
             existing.setdefault('validation',{})['deferred_development']=True
+            existing['budgets'].update(target_budgets)
+            existing['budgets']['job_wall_clock_seconds'] = max(
+                existing['budgets']['job_wall_clock_seconds'], record['budgets']['max_model_seconds'] * 4)
             atomic_write(config_path,json.dumps(existing,indent=2))
             data['config_digest']=digest(existing)
             atomic_write(job/'job.json',json.dumps(data,indent=2))
             store=ResearchStore(job/'private/research.sqlite')
             store.event('infrastructure_routing_migration',{'before':before,'after':digest(existing),
-                        'change':'full validation outside model session; official protocol unchanged'})
+                        'change':'align trusted agenda budgets/routing at idle boundary; consumption and official protocol unchanged'})
             store.close()
         return job
     base = json.loads((ROOT / 'configs/autoresearch_seeder.example.json').read_text())
@@ -128,7 +134,19 @@ def _finding(controller, record, knowledge, facts, job, role):
     if len(hypotheses)>1 and not selected:return None
     hypothesis = selected[-1] if selected else hypotheses[-1]
     if not set(hypothesis.get('source_urls', [])) & {s['url'] for s in sources}:
-        return None
+        if evidence['level'] != 'verified_seed':
+            return None
+        # Optional hypothesis citation fields must not discard an already
+        # certified export. Its publisher-gated, sealed source manifest is the
+        # authoritative provenance for this exact artifact, not inferred prose.
+        from .publisher import verify_export
+        export = Path(evidence['export'])
+        if not verify_export(export)['ok']:
+            return None
+        sealed_sources = json.loads((export / 'SOURCES.json').read_text()).get('sources', [])
+        if not sealed_sources or not {x['url'] for x in sealed_sources} <= {x['url'] for x in sources}:
+            return None
+        sources = sealed_sources
     package = {'mechanism': hypothesis['mechanism'], 'sources': sources,
                'compatibility': {'task': controller.adapter.task_id, 'applies_to_parents': True},
                'evidence': evidence, 'opportunity': hypothesis['expected_opportunity'],

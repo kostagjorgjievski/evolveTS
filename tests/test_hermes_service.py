@@ -74,6 +74,19 @@ def test_materialized_agenda_uses_real_controller_and_idempotent_verified_public
     finding=knowledge.get(result['checkpoint']['finding_id'])
     assert finding['payload']['evidence']['level']=='verified_seed'
     assert len(finding['payload']['evidence']['receipt_ids'])==2
+    # The source_urls tool field is optional. Certified immutable source
+    # provenance must still reach the library when a model omits that field.
+    from scripts.autoresearch_seeder.__main__ import _load_controller
+    from scripts.autoresearch_seeder.research_runtime import _finding, _close
+    controller, _, _ = _load_controller(job)
+    for hypothesis in controller.store.list_hypotheses():
+        hypothesis['source_urls']=[]
+        controller.store.db.execute('UPDATE hypotheses SET payload=? WHERE id=?',
+                                    (json.dumps(hypothesis),hypothesis['id']))
+    controller.store.db.commit()
+    recovered=_finding(controller,result,knowledge,[],job,'reproducer')
+    assert recovered['id']==finding['id']
+    _close(controller)
     out=check_findings(root,'new-branch',0,parent={'task':'seed_demo'},attempt_record=str(tmp_path/'attempt.json'))
     assert len(out['delivered'])==1
     again=run_materialized_investigation(agenda,agenda.get(item['id']),knowledge,runtime)
@@ -222,3 +235,25 @@ def test_cold_acceptance_uses_only_frozen_public_input_and_no_library(tmp_path, 
     run_materialized_investigation(agenda,item,knowledge,runtime)
     assert json.loads((job/'worker/research-agenda.json').read_text())['eligible_knowledge']==[]
     agenda.close();knowledge.close()
+
+
+def test_approved_agenda_budget_reload_keeps_consumption_and_artifact(tmp_path):
+    scaffold=build_job(tmp_path,E2E_SCRIPT)
+    root=tmp_path/'research';root.mkdir()
+    agenda=Investigations(root/'investigations.sqlite')
+    item=agenda.create('Approved finite budget migration',budgets={'max_model_seconds':60})
+    provider={'name':'test','credential_file':str(tmp_path/'unused.env'),'requested_model':'FakeModel-1'}
+    runtime={'task':'seed_demo','task_root':str(scaffold.adapter.root),'provider':provider}
+    from scripts.autoresearch_seeder.research_runtime import _create_job
+    job=_create_job(root,item,runtime)
+    data=json.loads((job/'job.json').read_text());before=(job/'worker/attempt_00/artifact/program.py').read_bytes()
+    from scripts.autoresearch_seeder.store import ResearchStore
+    store=ResearchStore(job/'private/research.sqlite');store.charge('model',seconds=7);store.close()
+    item['budgets']['max_model_seconds']=120
+    _create_job(root,item,runtime)
+    cfg=json.loads(Path(data['config_path']).read_text())
+    assert cfg['budgets']['model_session_seconds']==120
+    assert (job/'worker/attempt_00/artifact/program.py').read_bytes()==before
+    store=ResearchStore(job/'private/research.sqlite')
+    assert store.totals()['model']['seconds']==7
+    store.close();agenda.close()
