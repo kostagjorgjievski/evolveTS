@@ -156,9 +156,9 @@ drives the session.
 - **`hermes`** — `backends.HermesBackend`, driving the Hermes Agent CLI
   (Nous Research; pinned release **v0.22.5**, commit `bf0203a`, official
   docs at hermes-agent.nousresearch.com verified 2026-10-25). Invoked
-  headless as `hermes chat --oneshot --quiet --format stream-json
-  --usage-file … --query-file … --provider custom:<name> -m <model>
-  --ignore-rules --in <worker dir>`. Each job gets its own isolated
+  headless as `hermes --usage-file … chat --oneshot --quiet --format stream-json
+  --query-file … --provider custom:<name> -m <model>
+  --ignore-rules --toolsets seeder --in <worker dir>`. Each job gets its own isolated
   `HERMES_HOME` (`private/hermes-home/`: `config.yaml` + 0600 `.env`), so no
   Hermes memory, session or setting is shared between jobs. The GLM endpoint
   is registered as a named custom provider with the `anthropic_messages`
@@ -290,7 +290,7 @@ cached and bounded; HTTP success is never treated as research success; fetched
 content is untrusted data with URL, retrieval time, content hash, revision,
 attribution and license status recorded; a changed external document creates a
 new recorded source revision. The configured host restrictions (the saved
-Kaggle access restriction by default) are enforced in one place for every
+explicit optional host restrictions) are enforced in one place for every
 fetch path — public HTTPS only, private addresses blocked, no proxy or raw-HTTP
 bypass exists — and blocked sources are recorded via `report_access_needed`
 while research continues elsewhere.
@@ -355,3 +355,11 @@ regenerated deterministically into `docs/autoresearch-seeder/samples/`.
    (both arm configs are shipped DISABLED; no comparison session has run).
 
 No live pilot was started as part of this implementation.
+
+
+## Mac Mini runtime completion
+
+The installed-runtime findings, autonomous service, scout/reproducer routing,
+trusted deferred full grading and future-attempt bridge are documented in
+[hermes-rnd-operational.md](hermes-rnd-operational.md). The agenda now creates
+real task-scoped jobs; the old empty-tool agenda transport is test-only.

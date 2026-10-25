@@ -56,10 +56,12 @@ def run_session(controller, transport) -> SessionOutcome:
         job_dir=controller.job_dir)
     context_path = controller.job_dir / 'private' / 'prepared-context.md'
     atomic_write(context_path, prompt)
-    budget = {'session_seconds': max(1.0, controller.remaining_session_seconds()),
+    remaining_total=float(controller.config['budgets']['model_session_seconds'])-controller.consumed()['model_seconds']
+    budget = {'session_seconds': max(1.0, min(controller.remaining_session_seconds(),remaining_total)),
               'remaining_turns': controller.remaining_tool_calls()}
     session_started = time.monotonic()
     tool_calls = 0
+    admission_wait_seconds=0.0
     writes_applied = 0
     finished_reason = 'incomplete'
     usage_total = 0.0
@@ -69,6 +71,8 @@ def run_session(controller, transport) -> SessionOutcome:
     while True:
         result = transport.run(prompt, list(TOOL_SCHEMAS),
                                controller.job_dir / 'worker', budget)
+        admission_wait_seconds+=max(0,float(getattr(result,'admission_wait_seconds',0)))
+        controller.store.event('session_usage', {'usage':result.usage,'served_model':result.served_model,'session_id':result.session_id})
         served_model = served_model or result.served_model
         session_id = session_id or result.session_id
         usage_total += float(result.usage.get('total_cost_usd') or 0) \
@@ -97,13 +101,14 @@ def run_session(controller, transport) -> SessionOutcome:
             finished_reason = 'done'
             break
         # Yield control back through the controller budget between batches.
-        budget['session_seconds'] = max(1.0, controller.remaining_session_seconds())
+        budget['session_seconds'] = max(1.0, min(controller.remaining_session_seconds(),remaining_total-(time.monotonic()-session_started)))
         budget['remaining_turns'] = controller.remaining_tool_calls()
         if budget['remaining_turns'] <= 0:
             budget_exhausted = True
             finished_reason = 'budget_exhausted'
             break
-    model_seconds = time.monotonic() - session_started
+    model_seconds = max(0,time.monotonic() - session_started-admission_wait_seconds)
+    if admission_wait_seconds:controller.store.charge('provider_queue',seconds=admission_wait_seconds,note='outside model development budget')
     metadata = {}
     if hasattr(transport, 'metadata'):
         try:

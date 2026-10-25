@@ -536,7 +536,7 @@ def test_example_config_is_disabled_and_complete():
     config = config_module.load(path)
     assert config['enabled'] is False
     assert config['production']['automatic_enable'] is False
-    assert 'kaggle.com' in config['research']['blocked_hosts']
+    assert config['research']['blocked_hosts'] == []  # User-authorized public web access
 
 
 def test_experiment_idempotency_recovers_completed_results(tmp_path):

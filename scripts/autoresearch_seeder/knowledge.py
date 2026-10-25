@@ -16,9 +16,7 @@ Derived packages carry their input provenance: a package built from branch
 A's private result stays branch-A-scoped FOREVER, even if the same mechanism
 is later supported by a public paper (the private input taints the audience).
 Infrastructure faults and neutral API corrections form a fourth, reviewable
-category that can be distributed immediately AFTER controller review — their
-payload schema physically cannot carry scientific results (no scores, no
-methods), so distributing one leaks nothing scientific.
+category that can be distributed immediately AFTER controller review — their schema excludes scientific fields, but free text still requires controller review.
 
 The MCP tool surface never bypasses this module: investigation and branch
 sessions receive exactly what eligible_for() returns for their scope.
@@ -49,9 +47,8 @@ CREATE INDEX IF NOT EXISTS records_kind ON records(kind);
 CREATE INDEX IF NOT EXISTS records_branch ON records(branch);
 '''
 
-# Payload fields an infrastructure correction may carry. Anything scientific
-# (scores, methods, experiment outcomes) is rejected at write time, so a
-# distributed correction cannot leak another branch's science.
+# Payload fields an infrastructure correction may carry. Scientific keys are rejected at write time. Free text is additionally
+# subject to controller review; schema checks alone do not prevent leaks.
 INFRASTRUCTURE_FIELDS = frozenset(
     {'component', 'error_class', 'detail', 'affected_versions', 'workaround',
      'confirmed_utc', 'confirmed_by'})
@@ -79,10 +76,10 @@ class KnowledgeBase:
     committed); `check_findings` treats a missing base as empty rather than
     blocking an attempt."""
 
-    def __init__(self, path):
+    def __init__(self, path, timeout=30):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path, timeout=30)
+        self.db = sqlite3.connect(self.path, timeout=timeout)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript(SCHEMA)
 
@@ -158,6 +155,8 @@ class KnowledgeBase:
                                    'tainted': False})   # public inputs only
             tainted_branches = sorted({branch_name for audience in audiences
                                        for branch_name in audience['branches']})
+            if len(tainted_branches)>1:
+                raise KnowledgeError('Cannot combine private inputs from different branches before release')
             if tainted_branches:
                 # ANY private input (or origin) taints: the package stays
                 # scoped to those branches even when public sources support
@@ -244,6 +243,8 @@ class KnowledgeBase:
                 eligible.append(record_id)
             elif kind == 'released' and record_level <= level:
                 eligible.append(record_id)
+            elif kind=='package' and not audience.get('tainted') and not audience.get('branches') and level>=audience.get('min_level',0):
+                eligible.append(record_id)
             elif audience.get('tainted') or audience.get('branches'):
                 if branch in audience.get('branches', []) \
                         and level >= audience.get('min_level', 0) \
@@ -329,8 +330,9 @@ class KnowledgeBase:
         if record is None or record['kind'] != 'package':
             raise KnowledgeError('finding record required')
         payload = dict(record['payload'], ready=True)
-        self.db.execute('UPDATE records SET payload=? WHERE id=?',
-                        (json.dumps(payload), record_id))
+        updated={**record,'payload':payload}
+        self.db.execute('UPDATE records SET payload=?, content_sha256=? WHERE id=?',
+                        (json.dumps(payload),_content_digest(updated), record_id))
         self.db.commit()
         return self.get(record_id)
 
@@ -362,18 +364,17 @@ class KnowledgeBase:
         if not compatibility.get('applies_to_parents'):
             return False
         code_hash = compatibility.get('parent_code_sha256')
-        if code_hash and parent.get('code_sha256') \
-                and code_hash != parent['code_sha256']:
+        if code_hash and code_hash != parent.get('code_sha256'):
             return False
         task = compatibility.get('task')
-        if task and parent.get('task') and task != parent['task']:
+        if task and task != parent.get('task'):
             return False
         return True
 
     def deliver(self, record_id: str, attempt_record: str) -> dict:
         """Freeze a handoff into an attempt record; auditable, idempotent."""
         record = self.get(record_id)
-        if record is None or record['kind'] != 'package':
+        if record is None or record['kind'] not in ('package', 'released'):
             raise KnowledgeError('finding record required')
         if not record['payload'].get('ready'):
             raise KnowledgeError('only ready findings can be delivered')
@@ -424,7 +425,8 @@ class KnowledgeBase:
 
 
 def check_findings(knowledge_root, branch: str, level: int,
-                   parent: dict = None, attempt_record: str = None) -> dict:
+                   parent: dict = None, attempt_record: str = None,
+                   max_findings: int = None) -> dict:
     """Nonblocking attempt-boundary check (requirement: never wait, never fail).
 
     Returns immediately with ready findings for THIS branch's parent context;
@@ -433,9 +435,23 @@ def check_findings(knowledge_root, branch: str, level: int,
     reproducibility; the worker may still reject the advice.
     """
     try:
-        base = KnowledgeBase(Path(knowledge_root) / 'knowledge.sqlite')
+        path=Path(knowledge_root)/'knowledge.sqlite'
+        if not path.is_file():
+            return {'blocked':False,'findings':[],'delivered':[]}
+        base = KnowledgeBase(path,timeout=0)
         try:
             findings = base.ready_findings(branch, level, parent=parent)
+            if max_findings is not None:
+                counts = {}
+                for assignment in base.direction_assignments():
+                    counts[assignment['direction']] = counts.get(assignment['direction'], 0) + 1
+                def direction(record):
+                    return hashlib.sha256(str(record['payload']['mechanism']).encode()).hexdigest()
+                findings.sort(key=lambda r: (counts.get(direction(r), 0),
+                    hashlib.sha256((branch + r['id']).encode()).hexdigest()))
+                findings = findings[:max(0, max_findings)]
+                for finding in findings:
+                    base.assign_direction(direction(finding), branch, origin_record=finding['id'])
             delivered = []
             if attempt_record:
                 for finding in findings:

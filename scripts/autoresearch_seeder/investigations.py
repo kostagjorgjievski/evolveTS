@@ -34,10 +34,10 @@ STALE_SESSION_LIMIT = 2
 
 
 class Investigations:
-    def __init__(self, path):
+    def __init__(self, path, timeout=30):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path, timeout=30)
+        self.db = sqlite3.connect(self.path, timeout=timeout)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript(SCHEMA)
 
@@ -217,7 +217,7 @@ def eligible_knowledge(knowledge_base, investigation: dict) -> list:
     # shared scope: branch-private and tainted records are already excluded
     # (they never match a shared audience) — defensive kind filter anyway.
     return [record for record in records
-            if record['kind'] in ('external', 'released', 'infrastructure')]
+            if record['kind'] in ('external', 'released', 'infrastructure', 'package')]
 
 
 def run_investigation_session(investigations: Investigations,

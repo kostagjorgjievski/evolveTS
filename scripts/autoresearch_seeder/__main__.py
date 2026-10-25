@@ -288,7 +288,11 @@ def cmd_schedule(args):
         research_root = args.research_root or str(
             Path(args.run_root) / 'autoresearch-seeder-research')
         workspace = Path(research_root) / 'agenda-workspace'
-        research = {'enabled': bool(research_config.get('enabled')),
+        research = {**research_config, 'enabled': bool(research_config.get('enabled')),
+                    'materialized_jobs': True,
+                    'task':research_config.get('task','dfthcsos'),
+                    'task_root':research_config.get('task_root',str(ROOT)),
+                    'reproducer':research_config.get('reproducer',research_config.get('provider',{})),
                     'root': research_root,
                     'level': int((research_config.get('release_boundary')
                                   or {}).get('level', 0)),
@@ -399,15 +403,9 @@ def cmd_research_run(args):
             print(json.dumps({'started': None,
                               'reason': 'no eligible investigation'}, indent=2))
             return 0
-        workspace = Path(args.root) / 'agenda-workspace'
-        (workspace / 'worker').mkdir(parents=True, exist_ok=True)
-        factory = _transport_factory_for(
-            argparse.Namespace(job=str(workspace)))
-        transport = factory(research_config)
-        updated = run_investigation_session(
-            agenda, investigation['id'], transport, base,
-            budget_seconds=float((research_config.get('budgets') or {})
-                                 .get('session_seconds', 1200.0)))
+        from .research_runtime import run_materialized_investigation
+        updated = run_materialized_investigation(agenda, investigation, base,
+            {**research_config, 'root':str(args.root)})
         print(json.dumps({'investigation': investigation['id'],
                           'status': updated['status'],
                           'consumed': updated['consumed'],

@@ -4,7 +4,7 @@ binary — offline, no provider, no network.
 
 A real-Hermes discovery test exists but skips with an explicit prerequisite
 message when the Hermes CLI is absent (the MacBook Air dev machine); run it
-on the Mac Mini after `pipx install hermes-agent`.
+on the Mac Mini after installing the pinned official source.
 """
 import argparse
 import json
@@ -238,6 +238,8 @@ exit 0
 def install_fake_hermes(tmp_path, script=FAKE_HERMES):
     binary = tmp_path / 'bin' / 'hermes'
     binary.parent.mkdir(parents=True, exist_ok=True)
+    if '--version' not in script:
+        script=script.replace('#!/bin/sh\n','#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.22.5"; exit 0; fi\n',1)
     binary.write_text(script)
     binary.chmod(0o755)
     return binary
@@ -267,7 +269,10 @@ def test_fake_hermes_run_invokes_documented_cli_surface(tmp_path):
     args_file = home / 'test-args.txt'
     dump = home / 'test-env.txt'
     argv = args_file.read_text().splitlines()
-    assert argv[0:2] == ['chat', '--oneshot']
+    assert argv[0] == '--usage-file'
+    assert argv[2:4] == ['chat', '--oneshot']
+    assert '--run-budget' not in argv
+    assert argv[argv.index('--toolsets') + 1] == 'seeder'
     assert '--quiet' in argv and '--format' in argv
     assert argv[argv.index('--format') + 1] == 'stream-json'
     assert '--ignore-rules' in argv
@@ -288,17 +293,16 @@ def test_fake_hermes_run_invokes_documented_cli_surface(tmp_path):
     assert (job / 'private' / 'hermes-sessions').is_dir()
 
 
-def test_fake_hermes_timeout_raises_rate_limit_and_kills(tmp_path):
+def test_fake_hermes_timeout_checkpoints_and_kills(tmp_path):
     binary = install_fake_hermes(
         tmp_path, '#!/bin/sh\nsleep 30\n')
     backend, job = prepare_run_job(tmp_path, binary)
     started = time.monotonic()
-    with pytest.raises(ProviderRateLimit, match='model-session budget'):
-        backend.run('prompt', [], job / 'worker', {'session_seconds': 1})
+    outcome=backend.run('prompt', [], job / 'worker', {'session_seconds': 1})
+    assert outcome.usage['interrupted'] is True
+    assert outcome.model_seconds >= 1
     assert time.monotonic() - started < 15   # killed promptly, not after sleep 30
-    leftovers = [proc for proc in Path('/proc').iterdir() if proc.name.isdigit()] \
-        if Path('/proc').exists() else []
-    assert leftovers == [] or True   # process-group kill verified by prompt return
+
 
 
 def test_fake_hermes_error_output_is_classified(tmp_path):
@@ -308,11 +312,11 @@ def test_fake_hermes_error_output_is_classified(tmp_path):
     with pytest.raises(ProviderRateLimit):
         backend.run('prompt', [], job / 'worker', {'session_seconds': 10})
 
-    binary.write_text('#!/bin/sh\necho "invalid api key" >&2\nexit 1\n')
+    install_fake_hermes(tmp_path, '#!/bin/sh\necho "invalid api key" >&2\nexit 1\n')
     with pytest.raises(ProviderRefused):
         backend.run('prompt', [], job / 'worker', {'session_seconds': 10})
 
-    binary.write_text('#!/bin/sh\necho "boom" >&2\nexit 3\n')
+    install_fake_hermes(tmp_path, '#!/bin/sh\necho "boom" >&2\nexit 3\n')
     with pytest.raises(RuntimeError, match='exit code 3'):
         backend.run('prompt', [], job / 'worker', {'session_seconds': 10})
 
@@ -323,7 +327,7 @@ def test_fake_hermes_error_output_is_classified(tmp_path):
 
 def install_version_hermes(tmp_path, version_output):
     return install_fake_hermes(
-        tmp_path, f'#!/bin/sh\necho "{version_output}"\nexit 0\n')
+        tmp_path, f'#!/bin/sh\n# --version fixture\necho "{version_output}"\nexit 0\n')
 
 
 def version_checks(backend):
@@ -350,7 +354,7 @@ def test_preflight_rejects_version_mismatch(tmp_path):
     assert failed, 'a version mismatch must fail preflight'
     detail = failed[0]['detail']
     assert '0.21.0' in detail and '0.22.5' in detail
-    assert 'pipx install hermes-agent==0.22.5' in detail
+    assert 'official source at tag v0.22.5' in detail
 
 
 def test_preflight_rejects_unparseable_version(tmp_path):
@@ -390,8 +394,8 @@ def test_real_hermes_discovery_when_binary_present(tmp_path):
         pytest.skip(
             'Hermes CLI not installed on this machine. Prerequisite for the '
             'real discovery test: install Hermes Agent (Nous Research) — '
-            'pinned release ' + HERMES_PIN['release'] + ' — e.g. `pipx install '
-            'hermes-agent`, then re-run this test on the Mac Mini. The fake-'
+            'pinned release ' + HERMES_PIN['release'] + ' from official source; '
+            'then re-run this test on the Mac Mini. The fake-'
             'binary tests above already cover the full backend run path '
             'offline.')
     job = tmp_path / 'job'; job.mkdir()
@@ -400,5 +404,19 @@ def test_real_hermes_discovery_when_binary_present(tmp_path):
     assert version
     metadata = backend.metadata()
     assert metadata['hermes_reported_version'] == version
-    assert metadata['hermes_pin']['release'] in metadata['hermes_reported_version'] \
-        or True   # exact string differs across builds; both are recorded
+    assert metadata['hermes_reported_release'] == HERMES_PIN['release'].lstrip('v')
+
+
+def test_interrupt_before_timeout_cleans_up_without_masking_interrupt(tmp_path,monkeypatch):
+    binary=install_fake_hermes(tmp_path)
+    backend,job=prepare_run_job(tmp_path,binary)
+    monkeypatch.setattr(backend,'preflight',lambda:[])
+    signals=[]
+    class Interrupted:
+        pid=123456789
+        def communicate(self,timeout):raise KeyboardInterrupt()
+        def wait(self):return 0
+    monkeypatch.setattr('scripts.autoresearch_seeder.backends.subprocess.Popen',lambda *a,**k:Interrupted())
+    monkeypatch.setattr('scripts.autoresearch_seeder.backends.os.killpg',lambda pid,sig:signals.append((pid,sig)))
+    with pytest.raises(KeyboardInterrupt):backend.run('prompt',[],job/'worker',{'session_seconds':60})
+    assert signals and signals[0][0]==123456789

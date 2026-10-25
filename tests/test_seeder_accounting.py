@@ -88,3 +88,14 @@ def test_status_reports_cost_enforcement_caveat(tmp_path):
     assert 'post-hoc' in status['cost_enforcement']
     assert status['model_metadata']['requested_model'] == 'FakeModel-1'
     assert status['production_enabled'] is False
+
+
+def test_orphan_recovery_is_idempotent(tmp_path):
+    import datetime
+    controller=build_job(tmp_path,[])
+    start=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=5)).isoformat()
+    controller.store.event('session_started',{'session_started_utc':start})
+    controller._recover_orphan_session()
+    before=controller.consumed()['model_seconds']
+    controller._recover_orphan_session()
+    assert controller.consumed()['model_seconds']==before

@@ -9,6 +9,7 @@ Hermes session receive identical trusted tools.
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -188,10 +189,7 @@ def _yaml_dump(mapping) -> str:
             return 'true' if item else 'false'
         if isinstance(item, (int, float)):
             return str(item)
-        text = str(item)
-        if text == '' or any(char in text for char in ':{}[]#&*!|>\'"%\n'):
-            return _json.dumps(text)
-        return text
+        return _json.dumps(str(item))
 
     def render(value, indent) -> list:
         pad = ' ' * indent
@@ -297,7 +295,7 @@ class HermesBackend(Backend):
         config = {
             'model': {'provider': f'custom:{self.provider_name}',
                       'default': model},
-            'agent': {'reasoning_effort': effort},
+            'agent': {'reasoning_effort': effort, 'run_budget_seconds': self.provider.get('session_seconds', 1200)},
             'providers': {self.provider_name: {
                 'api': endpoint, 'key_env': key_env, 'transport': transport}},
             'mcp_servers': {'seeder': {
@@ -359,7 +357,10 @@ class HermesBackend(Backend):
     def probe_version(self) -> str:
         binary = self.resolve_binary()
         try:
-            probe = subprocess.run([binary, '--version'], capture_output=True,
+            interpreter=Path(binary).parent/'python'
+            command=([str(interpreter),'-c','from hermes_cli._startup_fast import print_fast_version_info; print_fast_version_info(check_updates=False)']
+                     if interpreter.is_file() else [binary,'--version'])
+            probe = subprocess.run(command, capture_output=True,
                                    text=True, timeout=self.version_timeout,
                                    env={**os.environ, 'HERMES_HOME': str(self.home)})
             self.reported_version = (probe.stdout + probe.stderr).strip()[:200]
@@ -413,7 +414,7 @@ class HermesBackend(Backend):
                                  f'({self.pinned_release()})', 'ok': False,
                         'detail': f'installed version {found} != pinned '
                                   f'{pinned}. Install the pinned release '
-                                  f'(e.g. `pipx install hermes-agent=={pinned}`) '
+                                  f'from the official source at tag v{pinned} '
                                   f'or re-verify against the new release and '
                                   f'update provider.hermes_pin deliberately.'})
             except ToolInfrastructureError as exc:
@@ -472,34 +473,43 @@ class HermesBackend(Backend):
                                      'tokens/cost; post-hoc, not a spend limiter)'})
         return info
 
+    def _stop_owner(self, binary, env):
+        record=self.home/'gateway.pid'
+        if not record.exists(): return
+        helper=Path(__file__).with_name('hermes_cleanup.py')
+        python=Path(binary).parent/'python'
+        if not python.is_file(): raise ToolInfrastructureError('Cannot clean Hermes owner: interpreter missing')
+        cleanup=subprocess.run([str(python),str(helper),str(self.home)],env=env,capture_output=True,text=True,timeout=15)
+        if cleanup.returncode: raise ToolInfrastructureError('Hermes owner cleanup failed; inspect local cleanup log')
+
     def run(self, prompt, tools, workspace, budget) -> TransportResult:
+        self.provider['session_seconds']=float(budget['session_seconds'])
+        self.tool_names=sorted(tools)
+        self._home_written=False
+        checks=self.preflight()
+        failures=[check for check in checks if not check.get('ok')]
+        if failures:raise ToolInfrastructureError('Hermes preflight failed: '+json.dumps(failures))
         binary = self.resolve_binary()
-        if not self._home_written:
-            self.write_home()
         sessions = self.job_dir / 'private' / 'hermes-sessions'
         sessions.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime('%Y%mdT%H%M%S')
+        stamp = time.strftime('%Y%m%dT%H%M%S')
         prompt_path = sessions / f'prompt-{stamp}.txt'
         prompt_path.write_text(prompt)
         prompt_path.chmod(0o600)
         usage_path = sessions / f'usage-{stamp}.json'
         stream_path = sessions / f'stream-{stamp}.jsonl'
         model = self.provider.get('requested_model')
-        command = [binary, 'chat', '--oneshot', '--quiet',
+        command = [binary, '--usage-file', str(usage_path), 'chat', '--oneshot', '--quiet',
                    '--format', 'stream-json',
-                   '--usage-file', str(usage_path),
+                   '--max-turns', str(max(1,min(1000,int(budget.get('remaining_turns',1000))))),
                    '--query-file', str(prompt_path),
                    '--provider', f'custom:{self.provider_name}',
-                   '--ignore-rules', '--in', str(self.job_dir / 'worker')]
+                   '--ignore-rules', '--toolsets', 'seeder', '--in', str(self.job_dir / 'worker')]
         if model:
             command += ['-m', model]
         env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
                'HERMES_HOME': str(self.home),
                'PYTHONDONTWRITEBYTECODE': '1'}
-        for key, value in self._credentials().items():
-            if key in ('ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'):
-                continue   # provider auth reaches Hermes via $HERMES_HOME/.env only
-            env.setdefault(key, value)
         result = TransportResult()
         started = time.monotonic()
         timeout = max(1.0, float(budget.get('session_seconds', 3600)))
@@ -507,20 +517,21 @@ class HermesBackend(Backend):
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, env=env, cwd=str(self.job_dir / 'worker'),
             start_new_session=True)   # own group: a timeout must take down MCP children too
+        checkpoint=False
         try:
             stdout, stderr = process.communicate(timeout=timeout)
             exit_code = process.returncode
         except subprocess.TimeoutExpired:
-            import signal
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except OSError:
                 pass
             process.wait()
             result.model_seconds = time.monotonic() - started
-            raise ProviderRateLimit(
-                'Hermes session exceeded its model-session budget '
-                f'({timeout:.0f}s wall clock)')
+            self._stop_owner(binary,env)
+            stdout,stderr=process.communicate(timeout=5)
+            exit_code=0
+            checkpoint=True
         except KeyboardInterrupt:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -528,7 +539,9 @@ class HermesBackend(Backend):
                 pass
             process.wait()
             result.model_seconds = time.monotonic() - started
+            self._stop_owner(binary,env)
             raise
+        self._stop_owner(binary,env)
         result.model_seconds = time.monotonic() - started
         stream_path.write_text(stdout or '')
         if usage_path.is_file():
@@ -537,7 +550,7 @@ class HermesBackend(Backend):
             except ValueError:
                 result.usage = {'raw': usage_path.read_text()[:4000]}
         self._absorb_stream(stdout or '', result)
-        if exit_code != 0:
+        if exit_code != 0 or result.usage.get('failed'):
             detail = (stderr or stdout or '')[-4000:]
             result.error_detail = detail
             result.finished_reason = 'error'
@@ -548,6 +561,12 @@ class HermesBackend(Backend):
                 raise classified
             raise RuntimeError('Hermes CLI failed with exit code '
                                f'{exit_code}: {detail[:2000]}')
+        if checkpoint:
+            result.usage.setdefault('cost_status','unknown')
+            result.usage['interrupted']=True
+            result.error_detail='Session checkpoint reached; own drafts and experiment ledger preserved'
+        if isinstance(result.usage,dict):
+            result.session_id=result.usage.get('session_id','')
         result.finished_reason = 'done'
         return result
 

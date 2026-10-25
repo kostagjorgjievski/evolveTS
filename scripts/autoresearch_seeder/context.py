@@ -71,6 +71,18 @@ def build_prepared_context(job, store, adapter, config, job_dir=None) -> str:
         except OSError:
             pass
 
+    accessed=store.list_sources('accessed')
+    if accessed:
+        lines.append('## Inspected source index (cite these exact identifiers for provenance)')
+        for source in accessed:
+            local=source.get('local_path','')
+            if job_dir:
+                try:local=str(Path(local).relative_to(Path(job_dir)))
+                except ValueError:local='external cached source; retrieve through the source tools'
+            lines.append(f"- {source['url']} | license: {source.get('license','unknown')} | own cached files: {local}")
+        lines.append('A supplied public bundle is a source too: cite its recorded identifier plus original URLs. Author scores remain claims.')
+        lines.append('')
+
     hypotheses = store.list_hypotheses('active') or store.list_hypotheses()
     if hypotheses:
         lines.append('## Hypothesis shortlist')

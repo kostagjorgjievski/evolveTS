@@ -368,3 +368,39 @@ def test_shared_scope_excludes_private_and_tainted(tmp_path):
     branch_records = eligible_knowledge(base, branch_investigation)
     assert any(record['kind'] == 'branch_private'
                for record in branch_records)   # own history included
+
+
+def test_mixed_private_inputs_are_rejected(tmp_path):
+    from scripts.autoresearch_seeder.knowledge import KnowledgeBase, KnowledgeError
+    import pytest
+    base=KnowledgeBase(tmp_path/'mixed.sqlite')
+    a=base.add('branch_private',{'method':'A-only'},branch='A')
+    b=base.add('branch_private',{'method':'B-only'},branch='B')
+    with pytest.raises(KnowledgeError,match='different branches'):
+        base.add('package',{'method':'mixed'},inputs=[a['id'],b['id']])
+    base.close()
+
+
+def test_external_package_is_visible_to_all_branches(tmp_path):
+    from scripts.autoresearch_seeder.knowledge import KnowledgeBase
+    base=KnowledgeBase(tmp_path/'public.sqlite')
+    source=base.add('external',{'url':'https://example.org/paper'})
+    package=base.add('package',{'method':'public'},inputs=[source['id']])
+    for branch in ['A','B',None]:
+        assert package['id'] in {r['id'] for r in base.eligible_records(branch,0)}
+    base.close()
+
+
+def test_file_tools_cannot_read_or_write_other_jobs(tmp_path):
+    from scripts.autoresearch_seeder.testing import build_job
+    job=build_job(tmp_path,[])
+    secret=tmp_path/'other-branch-secret';secret.write_text('private')
+    outcome=job.dispatcher.execute('read_research_file',{'path':str(secret)})
+    assert outcome['status']=='error'
+    outcome=job.dispatcher.execute('read_research_file',{'path':'../../other-branch-secret'})
+    assert outcome['status']=='error'
+    outcome=job.dispatcher.execute('write_candidate_file',{'path':'private/fake-receipt.json','content':'{}'})
+    assert outcome['status']=='error'
+    path='worker/attempt_00/artifact/notes.md'
+    assert job.dispatcher.execute('write_candidate_file',{'path':path,'content':'own notes'})['status']=='ok'
+    assert job.dispatcher.execute('read_research_file',{'path':path})['result']['text']=='own notes'

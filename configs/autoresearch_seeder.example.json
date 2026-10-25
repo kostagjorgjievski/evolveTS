@@ -26,7 +26,7 @@
     "conservative_comparison": "both_salts"
   },
   "research": {
-    "blocked_hosts": ["kaggle.com", "www.kaggle.com"],
+    "blocked_hosts": [],
     "allow_network_fetch": true,
     "max_sources": 200
   },
@@ -39,5 +39,5 @@
   "production": {
     "automatic_enable": false
   },
-  "_comment": "DISABLED EXAMPLE. provider.backend selects the researcher backend: claude_code (default) or hermes (requires the Hermes CLI; see docs/autoresearch-seeder.md).  This example intentionally ships with enabled=false. A live start requires every budget above present and finite, an enabled=true config and a passing preflight. The blocked_hosts list preserves the existing saved Kaggle access restriction; blocked sources are recorded as needs_access, never bypassed. No known chemistry solution or improved public artifact is included, keeping a later blind evaluation possible."
+  "_comment": "DISABLED EXAMPLE. provider.backend selects the researcher backend: claude_code (default) or hermes (requires the Hermes CLI; see docs/autoresearch-seeder.md).  This example intentionally ships with enabled=false. A live start requires every budget above present and finite, an enabled=true config and a passing preflight. Public Kaggle access is allowed. Optional per-host restrictions are explicit configuration; authentication/access failures are reported honestly. No known chemistry solution or improved public artifact is included, keeping a later blind evaluation possible."
 }

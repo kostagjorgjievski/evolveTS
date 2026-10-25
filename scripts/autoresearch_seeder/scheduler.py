@@ -137,6 +137,10 @@ def _maybe_research_session(research) -> dict:
             return None   # agenda empty/spent: plain idle outcome
         session_budget = float((research.get('budgets') or {})
                                .get('session_seconds', 1200.0))
+        if research.get('materialized_jobs'):
+            from .research_runtime import run_materialized_investigation
+            updated=run_materialized_investigation(investigations,investigation,knowledge,research)
+            return {'started':None,'eligible':0,'investigation_session':investigation['id'],'investigation_status':updated['status'],'reason':'one durable scout/reproduction job session'}
         transport = research['transport_factory'](research.get('provider', {}))
         updated = run_investigation_session(
             investigations, investigation['id'], transport, knowledge,

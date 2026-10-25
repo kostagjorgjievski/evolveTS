@@ -46,7 +46,7 @@ DEFAULTS = {
         'conservative_comparison': 'both_salts',
     },
     'research': {
-        'blocked_hosts': ['kaggle.com', 'www.kaggle.com'],
+        'blocked_hosts': [],
         'allow_network_fetch': True,
         'max_sources': 200,
     },

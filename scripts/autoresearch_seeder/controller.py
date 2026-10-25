@@ -322,7 +322,7 @@ class Controller:
         now = datetime.datetime.now(datetime.timezone.utc)
         elapsed = max(0.0, (now - begin).total_seconds())
         cap = float(self.config['budgets']['model_session_seconds'])
-        charged = min(elapsed, cap)
+        charged = min(elapsed, max(0,cap-self.job_state().get('consumed',{}).get('model_seconds',0)))
         self.store.charge('model', seconds=charged,
                           note='crash-recovered session time (upper bound; '
                                f'orphan started {started_at})')
@@ -331,6 +331,8 @@ class Controller:
         self.save_job(consumed=consumed)
         self.store.event('session_recovered', {'charged_seconds': charged,
                                                'orphan_started_utc': started_at})
+        self.store.event('session_ended', {'reason': 'recovered_orphan',
+                                           'model_seconds': charged})
 
     # -- main loop -----------------------------------------------------------------
     def run(self, *, max_sessions: int = None) -> dict:
@@ -399,7 +401,7 @@ class Controller:
     # Events that are controller bookkeeping, not research activity: an empty
     # session that only produces these must still count as no progress.
     BOOKKEEPING_EVENTS = frozenset({
-        'session_started', 'session_ended', 'session_recovered', 'budget',
+        'session_started', 'session_ended', 'session_recovered', 'session_usage', 'budget',
         'provider_error', 'retry_wait', 'resume', 'terminal', 'ownership_lost',
         'lease_claimed', 'lease_reclaimed', 'lease_renewed',
         'lease_renew_refused', 'lease_release_refused'})
@@ -420,6 +422,7 @@ class Controller:
         while True:
             transport = self.transport_factory(self.config)
             try:
+                self._check_budgets()
                 # session_started/session_ended bracket every attempt so a
                 # crash mid-session leaves a recoverable orphan marker
                 # (unhandled exceptions propagate without session_ended).
@@ -432,6 +435,7 @@ class Controller:
                 self._post_session()
                 return
             except ProviderRateLimit as limited:
+                self._recover_orphan_session()
                 self.store.event('session_ended', {'model_seconds': 0.0,
                                                    'reason': 'provider_rate_limit'})
                 self.store.event('provider_error', {'class': 'rate_limit',
@@ -459,6 +463,7 @@ class Controller:
                 self._sleep_bounded(wait)
                 self.save_job(stage=previous)
             except ProviderRefused as refused:
+                self._recover_orphan_session()
                 self.store.event('session_ended', {'model_seconds': 0.0,
                                                    'reason': 'provider_refused'})
                 self.store.event('provider_error', {'class': 'refused',
@@ -470,6 +475,7 @@ class Controller:
                                               'detail': str(refused)[:2000]})
                 return
             except BudgetExhausted as exhausted:
+                self._recover_orphan_session()
                 self.store.event('session_ended', {'model_seconds': 0.0,
                                                    'reason': 'budget_exhausted'})
                 self.save_job(stage='budget_exhausted',
@@ -511,6 +517,16 @@ class Controller:
             # The worker triggers validation through the tool; when the receipt
             # exists the controller takes over trust decisions.
             latest_bundle = self._current_bundle()
+            requests = self.store.list_events('development_requested')
+            if (self.config.get('validation', {}).get('deferred_development')
+                    and requests and requests[-1].get('input_bundle_sha256') == latest_bundle
+                    and not any(e['input_bundle_sha256'] == latest_bundle for e in dev_attempts)):
+                self.save_job(stage='development_validation')
+                result = self.dispatcher._run_experiment('development_validation', {'which': 'development'})
+                if result.get('status') == 'infrastructure_blocked':
+                    self.save_job(stage='infrastructure_blocked', terminal={'reason': result['error'], 'utc': utc()})
+                    return
+                dev_attempts = self.store.list_experiments('development_validation')
             for experiment in reversed(dev_attempts):
                 if experiment['input_bundle_sha256'] == latest_bundle:
                     self.save_job(stage='development_validation')
