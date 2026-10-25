@@ -369,3 +369,10 @@ def test_follow_up_negative_target_closes_without_republishing_parent(tmp_path):
     assert c.job_state()['stage']=='completed_no_improvement'
     assert not list((c.job_dir/'exports').glob('seed-*'))
     assert c.store.totals()=={}
+
+
+def test_follow_up_parent_diagnostics_cannot_become_positive_method_advice():
+    from types import SimpleNamespace
+    from scripts.autoresearch_seeder.research_runtime import _finding
+    controller=SimpleNamespace(job_state=lambda:{'stage':'implementing'})
+    assert _finding(controller,{'origin':'public_hypothesis_follow_up:parent:hyp'},None,[],None,'reproducer') is None

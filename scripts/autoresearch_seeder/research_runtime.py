@@ -136,6 +136,10 @@ def _finding(controller, record, knowledge, facts, job, role):
     """Model text cannot grant verified-seed status; only the publisher can."""
     from .publisher import publish
     state = controller.job_state()
+    if record['origin'].startswith('public_hypothesis_follow_up:') and state['stage'] != 'seed_ready':
+        # Parent diagnostics may pass without testing the new mechanism.
+        # Preserve them as memory, but never advertise them as positive advice.
+        return None
     store = controller.store
     hypotheses = store.list_hypotheses()
     sources = store.list_sources('accessed')
