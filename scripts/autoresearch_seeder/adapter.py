@@ -62,6 +62,11 @@ class TaskAdapter:
         }
 
     def salt(self, which: str, config: dict) -> str:
+        if self.task_id == 'dqi' and which == CONFIRMATION:
+            # Same independent salt as the task-owned literature acceptance
+            # entry point; no official protocol/scoring changes.
+            from .dqi_adapter import FINAL_SALT
+            return FINAL_SALT
         key = (config.get('validation', {}).get(
             'development_salt_key' if which == DEVELOPMENT else 'final_salt_key'))
         value = self.protocol.get(key if key else ('development_salt' if which == DEVELOPMENT else 'final_salt'))
@@ -114,6 +119,9 @@ class TaskAdapter:
         """Sandboxed own-code diagnostic. FAIL is an experiment outcome,
         not a job failure; infrastructure faults raise ToolInfrastructureError."""
         attempt = Path(attempt_dir).resolve()
+        if self.task_id == 'dqi':
+            from .dqi_adapter import diagnostic
+            return diagnostic(self, attempt)
         diagnose = self._task_module('diagnose')
         try:
             receipt = diagnose.diagnose(attempt)
@@ -136,6 +144,9 @@ class TaskAdapter:
         source. Both receipts are preserved by the caller.
         """
         attempt = Path(attempt_dir).resolve()
+        if self.task_id == 'dqi':
+            from .dqi_adapter import validate
+            return validate(self, attempt, output_dir, which, config, submission_dir)
         program = attempt / self.candidate_file
         output = Path(output_dir).resolve()
         if output.exists():

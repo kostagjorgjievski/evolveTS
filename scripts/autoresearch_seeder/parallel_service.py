@@ -5,6 +5,8 @@ in-flight sessions in daily admission; the parent alone writes the shared ledger
 Workers retain the existing own-job leases, official grading and provider slots.
 """
 import datetime
+import contextlib
+import fcntl
 import json
 import os
 import shutil
@@ -151,14 +153,35 @@ class ParallelOwner:
             self.save()
 
     def admit(self, role, record, launcher=None):
+        lock_path = self.config.get('service', {}).get('budget_group_lock')
+        with contextlib.ExitStack() as stack:
+            if lock_path:
+                path = Path(lock_path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                lock = stack.enter_context(path.open('a'))
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            return self._admit(role, record, launcher)
+
+    def _admit(self, role, record, launcher=None):
         if role not in ('scout', 'reproducer'):
             return False
         day = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         used = self.state['ledger'].setdefault(day, {'sessions': 0, 'model_seconds': 0., 'usd': 0.})
         limits = self.config['budgets']
-        remaining = limits['daily_model_seconds']-used['model_seconds']
-        if (role in self.state['active'] or used['sessions'] >= limits['daily_sessions']
-                or remaining <= 10 or used['usd'] >= limits['daily_reported_usd']):
+        combined = dict(used)
+        for peer in self.config.get('service', {}).get('budget_group_roots', []):
+            peer = Path(peer).resolve()
+            if peer == self.root.resolve():
+                continue
+            state = peer/'parallel-state.json'
+            ledger = peer/'service-ledger.json'
+            data = (json.loads(state.read_text())['ledger'] if state.exists()
+                    else json.loads(ledger.read_text()) if ledger.exists() else {})
+            for key in combined:
+                combined[key] += data.get(day, {}).get(key, 0)
+        remaining = limits['daily_model_seconds']-combined['model_seconds']
+        if (role in self.state['active'] or combined['sessions'] >= limits['daily_sessions']
+                or remaining <= 10 or combined['usd'] >= limits['daily_reported_usd']):
             return False
         if any(e['investigation'] == record['id'] for e in self.state['active'].values()):
             return False

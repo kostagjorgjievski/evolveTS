@@ -225,3 +225,33 @@ lanes, investigation IDs and process identities. Usage includes reserved in-flig
 time, so it is conservative while a session runs. SIGTERM drains existing work;
 STOP/PAUSE prevents admission. Deployment from the serial service waits for its
 saved-session boundary. Never run a second supervisor for the same root.
+
+## Independent DQI research track
+
+`configs/hermes_dqi.example.json` is a disabled deployment template. Configure
+machine-local paths and provider capacity, then pass a real sandbox probe and
+trusted verifier rejection probe before enabling it. The task root must contain
+the existing DQI library manifest, protocol, acceptance interpreter, calibration
+receipt and unchanged pinned official verifier files. Research starts from the
+official baseline and neutral API, never paused campaign source or transcripts.
+Use a separate research root for each benchmark: agenda/knowledge databases,
+private jobs, prepared contexts, exports and process identities are task-local.
+Creating a DQI researcher does not resume the DQI RSI campaign or install seeds.
+
+The DQI integration calls the existing task generator/verifier under its existing
+sandbox, full 102400-shot workload and normalization. It snapshots own source
+helpers, verifies the generated circuit, then uses the saved exact circuit for
+independent confirmation with the existing literature-acceptance held-out salt.
+No generator rerun, official verifier edit or protocol hash change is required.
+Diagnostics have access to `ARTIFACT_DIR` (their frozen own helper bundle), the
+ordinary `TEST_OUTPUT_DIR` and pinned official DQI package. They have neither
+network access nor access to other runs or credentials.
+
+All benchmark supervisors in a shared budget group must configure the same
+`service.budget_group_roots`, `service.budget_group_lock` and daily ceilings.
+Admissions take that common lock and include every peer's durable ledger and
+in-flight reservations, so adding a benchmark does not multiply the daily cap.
+On initial migration, drain old supervisors before allowing a new track to
+start; existing productive workers finish with their saved context/budgets.
+Per-root ledgers remain separate; the shared totals bound admission. Provider
+capacity and the existing shared heavy CPU lock continue across benchmarks.

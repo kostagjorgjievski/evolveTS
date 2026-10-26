@@ -93,3 +93,20 @@ def test_dead_worker_fails_closed_without_duplicate_or_unbilled_retry(tmp_path):
     assert (tmp_path/'PAUSE').exists()
     assert next(iter(owner.state['ledger'].values()))['model_seconds'] == 30
     assert not owner.state['active']
+
+
+def test_two_benchmark_roots_share_inflight_daily_admission(tmp_path):
+    first=tmp_path/'chemistry';second=tmp_path/'dqi'
+    first.mkdir();second.mkdir()
+    cfg,a,b=make(first)
+    cfg2,c,d=make(second)
+    for conf in [cfg,cfg2]:
+        conf['budgets']['daily_sessions']=2
+        conf['service'].update(budget_group_roots=[str(first),str(second)],
+                              budget_group_lock=str(tmp_path/'shared.lock'))
+    chemistry=ParallelOwner(first,cfg);dqi=ParallelOwner(second,cfg2)
+    assert chemistry.admit('scout',b,launch)
+    assert dqi.admit('scout',d,launch)
+    assert not chemistry.admit('reproducer',a,launch)
+    assert not dqi.admit('reproducer',c,launch)
+    assert sum(next(iter(o.state['ledger'].values()))['sessions'] for o in [chemistry,dqi])==2
