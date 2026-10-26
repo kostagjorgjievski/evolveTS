@@ -74,7 +74,7 @@ def normalize(text):
     return re.sub(r'\W+',' ',text.casefold()).strip()
 
 
-def packet(store, args, task, known=()):
+def packet(store, args, task, known=(), persist=True):
     """Validate citations and structure; the scientific content stays unverified."""
     allowed=set(TEXT_FIELDS)|{'hypothesis_id','dependency_urls','resource_estimates','evidence_spans'}
     if set(args)-allowed:raise ValueError('Unknown packet fields')
@@ -104,7 +104,7 @@ def packet(store, args, task, known=()):
         alternatives=[{'url':v['url'],'content_sha256':v['content_sha256']} for v in store.list_sources('accessed')
                       if v.get('content_sha256') and filename(v['url']) in names][:12]
         error=PacketCitationError(hypothesis['id'],missing,alternatives)
-        store.event('scout_packet_issue',error.scout_issue)
+        if persist:store.event('scout_packet_issue',error.scout_issue)
         raise error
     from .source_evidence import verify_spans
     verified_spans=verify_spans(store,args.get('evidence_spans'),set(urls))
@@ -142,7 +142,7 @@ def packet(store, args, task, known=()):
     if any(e['packet']['fingerprint']==content['fingerprint'] for e in previous):
         content['duplicate_packet']=True
     else:content['duplicate_packet']=False
-    store.event('scout_packet',{'packet':content})
+    if persist:store.event('scout_packet',{'packet':content})
     return content
 
 
@@ -169,6 +169,22 @@ def metrics(root):
         con=sqlite3.connect('file:'+str(db)+'?mode=ro',uri=True)
         try:
             events=[(k,json.loads(v)) for k,v in con.execute('select kind,payload from events')]
+            patch_marks=[v for k,v in events if k=='scout_handoff_patch']
+            if patch_marks:
+                from datetime import datetime
+                start=patch_marks[0]['adopted_utc']
+                after=[(t,k,json.loads(v)) for t,k,v in con.execute('select created_utc,kind,payload from events where created_utc>=? order by id',(start,))]
+                patch=summary.setdefault('handoff_patch',{'jobs':0,'drafts':0,'packet_errors':0,'ready_packets':0,'reviews':0,'corrected_or_rejected_reviews':0,'first_handoff_wall_seconds':[], 'note':'Since per-job patch adoption; wall time includes queues. Observational, not causal.'})
+                patch['jobs']+=1
+                ready_times=[]
+                for t,k,v in after:
+                    patch['drafts']+=k=='scout_draft'
+                    patch['packet_errors']+=k=='scout_packet_issue'
+                    if k=='scout_packet' and v['packet']['handoff_status']=='ready_for_review':
+                        patch['ready_packets']+=1;ready_times.append(t)
+                    if k=='scout_review':
+                        patch['reviews']+=1;patch['corrected_or_rejected_reviews']+=v.get('outcome') in ('corrected','rejected')
+                if ready_times:patch['first_handoff_wall_seconds'].append((datetime.fromisoformat(ready_times[0])-datetime.fromisoformat(start)).total_seconds())
             cohort='scout-v2' if any(k=='scout_policy' for k,v in events) else 'legacy'
             s=summary['cohorts'].setdefault(cohort,dict(jobs=0,packets=0,ready_packets=0,duplicate_packets=0,
                  hypotheses=0,decisions=0,provider_errors=0,fetch_errors=0,model_seconds=0,verified_exports=0,
@@ -253,3 +269,27 @@ if __name__=='__main__':
     args=parser.parse_args();result=metrics(args.root)
     if args.output:atomic_write(args.output,json.dumps(result,indent=2))
     print(json.dumps(result,indent=2))
+
+
+def check_packet(store,args,task):
+    """Read-only preflight; never writes a packet/review or fabricates evidence."""
+    issues=[]
+    hypothesis=store.get_hypothesis(args.get('hypothesis_id','')) or {}
+    from .source_evidence import verify_spans
+    urls=set(hypothesis.get('source_urls',[]))
+    spans=args.get('evidence_spans',[])
+    for index,span in enumerate(spans if isinstance(spans,list) else []):
+        try:verify_spans(store,[span],urls)
+        except (ValueError,OSError,KeyError,TypeError) as error:
+            source=store.get_source(span.get('source_url','')) if isinstance(span,dict) else None
+            issues.append({'field':f'evidence_spans[{index}]','error':str(error),
+                'cached_path':(source or {}).get('local_path'),
+                'citation_format':'repository: source_url + manifest-listed relative_path; individual file: source_url only, omit relative_path',
+                'allowed_source_urls':sorted(urls),
+                'next_action':'Read the exact cached source and repair this span; use repair_hypothesis_citations if the original source list is wrong. Do not invent or approximate quotations.'})
+    try:result=packet(store,args,task,persist=False)
+    except (ValueError,OSError,KeyError,TypeError) as error:
+        if not issues:issues.append({'field':'packet','error':str(error),'next_action':'Correct the named field or fetch the cited original source, then check again.'})
+        result={}
+    return {'ok':not issues,'issues':issues,'handoff_status':result.get('handoff_status'),
+            'certification':False,'next_action':'record_scout_packet' if not issues else 'repair the draft and check again'}

@@ -287,6 +287,7 @@ class HermesBackend(Backend):
         endpoint, api_key, transport = self._endpoint(credentials)
         server = mcp_server_command(self.job_dir, self.app_root)
         env = server_env(self.app_root)
+        env['SEEDER_ALLOWED_TOOLS']=json.dumps(self.tool_names)
         model = self.provider.get('requested_model') \
             or credentials.get('ANTHROPIC_MODEL', '')
         effort = self.provider.get('requested_effort', 'medium')

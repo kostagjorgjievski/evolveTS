@@ -70,7 +70,9 @@ def verify_spans(store,spans,citation_urls):
             raise ValueError('Each span requires source_url, quote and claim; optional repository relative_path')
         if len(normalized(span['quote']))<24:raise ValueError('Use a substantive quotation of at least24 characters')
         if span['source_url'] not in citation_urls:raise ValueError('Evidence must cite this packet original sources')
-        source=store.get_source(span['source_url']);path=Path(source.get('local_path',''))
+        source=store.get_source(span['source_url'])
+        if not source or source.get('status')!='accessed':raise ValueError('Fetch and hash this exact source URL before citing it: '+span['source_url'])
+        path=Path(source.get('local_path',''))
         if not path.is_absolute() or path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):raise ValueError('Evidence must use this job fetched cache, without links')
         if path.is_dir():
             index=path/'SOURCE_MANIFEST.json'

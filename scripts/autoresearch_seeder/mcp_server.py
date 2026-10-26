@@ -34,14 +34,19 @@ def main():
     store = ResearchStore(job_dir / 'private' / 'research.sqlite')
     dispatcher = ToolDispatcher(store, adapter, config, job_dir)
 
+    requested=json.loads(os.environ['SEEDER_ALLOWED_TOOLS']) if 'SEEDER_ALLOWED_TOOLS' in os.environ else list(TOOL_SCHEMAS)
+    if not isinstance(requested,list) or any(name not in TOOL_SCHEMAS for name in requested):raise ValueError('Invalid allowed tools')
+    allowed=set(requested)
+
     async def list_tools(context, params):
         return types.ListToolsResult(tools=[
             types.Tool(name=name, description=TOOL_DESCRIPTIONS[name],
                        inputSchema=TOOL_SCHEMAS[name])
-            for name in TOOL_SCHEMAS])
+            for name in TOOL_SCHEMAS if name in allowed])
 
     async def call_tool(context, params):
         try:
+            if params.name not in allowed:raise ValueError('Tool not allowed for this session')
             outcome = dispatcher.execute(params.name, params.arguments or {})
             return types.CallToolResult(
                 content=[types.TextContent(text=json.dumps(outcome))],

@@ -103,3 +103,43 @@ def test_legacy_deferred_request_cannot_bypass_review_gate(tmp_path):
     assert not c.store.list_experiments('development_validation')
     assert any('Evidence review required' in reason for reason in evaluate_gates(c)['reasons'])
     c.store.close()
+
+
+def test_packet_precheck_reports_exact_field_without_advancing(tmp_path):
+    job,s,a,p,url=make(tmp_path)
+    broken={**a,'evidence_spans':[{**a['evidence_spans'][0],'relative_path':'source.py'}]}
+    checked=q.check_packet(s,broken,'dqi')
+    assert not checked['ok']
+    assert checked['issues'][0]['field']=='evidence_spans[0]'
+    assert checked['issues'][0]['cached_path']==str(p)
+    assert 'omit relative_path' in checked['issues'][0]['citation_format']
+    assert not s.list_events('scout_packet')
+    assert q.check_packet(s,a,'dqi')['ok']
+    assert not s.list_events('scout_packet')
+    s.close()
+
+
+def test_draft_survives_reopen_but_does_not_qualify_for_review(tmp_path):
+    job,s,a,p,url=make(tmp_path)
+    dispatcher=ToolDispatcher(s,SimpleNamespace(task_id='dqi'),{},job)
+    assert dispatcher.execute('save_scout_draft',{'draft':a})['result']['eligible'] is False
+    s.close();s=ResearchStore(job/'private/research.sqlite')
+    assert json.loads((job/'worker/scout-draft.json').read_text())==a
+    assert s.list_events('scout_draft') and not s.list_events('scout_packet')
+    s.event('research_role',{'role':'reproducer'})
+    with pytest.raises(ValueError,match='scout packet'):require_review(s)
+    s.close()
+
+
+def test_packet_error_feedback_persists_and_repair_still_needs_review(tmp_path):
+    job,s,a,p,url=make(tmp_path)
+    d=ToolDispatcher(s,SimpleNamespace(task_id='dqi'),{},job)
+    bad={**a,'evidence_spans':[{**a['evidence_spans'][0],'quote':'a fabricated quotation that is not present'}]}
+    result=d.execute('record_scout_packet',bad)
+    assert result['status']=='error' and result['scout_issue']['issues']
+    assert q.pending_issues(s)
+    assert d.execute('record_scout_packet',a)['status']=='ok'
+    assert not q.pending_issues(s)
+    s.event('research_role',{'role':'reproducer'})
+    with pytest.raises(ValueError,match='Independent reproducer review'):require_review(s)
+    s.close()

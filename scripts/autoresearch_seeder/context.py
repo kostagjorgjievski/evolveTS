@@ -99,6 +99,10 @@ def build_prepared_context(job, store, adapter, config, job_dir=None) -> str:
             lines.append(f"  reject when: {hypothesis['rejection_conditions'] or 'unspecified'}")
         lines.append('')
 
+    drafts=store.list_events('scout_draft')
+    if drafts:
+        lines.extend(['## Incremental handoff saved', 'Read worker/scout-draft.json. Repair and submit this draft before expanding the search. A draft is not an approved packet.', ''])
+
     from .scout_quality import pending_issues, refresh_citation_issues
     refresh_citation_issues(store)
     issues=pending_issues(store)
