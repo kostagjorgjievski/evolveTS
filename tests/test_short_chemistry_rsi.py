@@ -41,3 +41,21 @@ def test_short_full_validation_tool_only_freezes_request(tmp_path,monkeypatch):
     assert data['status']=='requested' and 'program.py' in data['files']
     assert (attempt.parent/'full-validation-request.json').exists()
     assert not list(tmp_path.rglob('result.json'))
+
+
+def test_authorized_extension_preserves_twelve_and_adds_exactly_thirty_two(tmp_path):
+    from dream_rsi.env.trace_store import scaffold_grid_nodes
+    campaign=tmp_path/'campaign';workspace=campaign/'workspace';workspace.mkdir(parents=True)
+    nodes=[n.to_dict() for n in scaffold_grid_nodes(workspace,max_width=4,max_refine=2)]
+    for n in nodes:n.update(status='done',raw={'evaluated':True,'combined_score':4.146})
+    original=json.loads(json.dumps(nodes))
+    pilot.save(workspace/'raw_scores.json',{'nodes':nodes,'baseline':{'combined_score':1.0}})
+    pilot.save(campaign/'campaign.json',{'branches':dict.fromkeys(pilot.NAMES,{}),
+        'attempts_per_branch':3,'development_seconds_per_attempt':1200})
+    assert pilot.extend_completed_grid(campaign)=={'preserved':12,'appended':32,'total':44}
+    actual=pilot.read(workspace/'raw_scores.json')['nodes']
+    assert actual[:12]==original
+    assert len({n['id'] for n in actual})==44
+    assert all(n['status']=='pending' and not n['raw']['evaluated'] for n in actual[12:])
+    assert all(sum(n['branch']==b for n in actual)==11 for b in range(4))
+    assert pilot.read(campaign/'campaign.json')['development_seconds_per_attempt']==1200

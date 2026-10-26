@@ -1,4 +1,4 @@
-"""User-approved 2 Kimi/2 GLM, two-seed, 3x20min actual DreamRSI pilot.
+"""User-approved 2 Kimi/2 GLM, two-seed, configured20-minute actual DreamRSI campaign.
 
 Own fresh conversations, own-branch experimental memory, full unchanged exact-
 submission grading, then upstream policy discovery/replay; no automatic E1.
@@ -51,7 +51,7 @@ def initialize_attempt(campaign,name,index):
          'development':manifest['development'],'confirmation':manifest['confirmation']})
     meta.update(provider=provider,worker_model=model,effort=effort,credential_file=credential,
                 campaign=str(campaign),round=index,max_session_seconds=1200,
-                session_seconds_used=0,status='prepared',experiment='chemistry_RSI_3x20_two_seeds',
+                session_seconds_used=0,status='prepared',experiment='chemistry_RSI_20min_two_seeds',
                 conversation_memory=False,prepared_parent_context=True,
                 seed_export=seed,experimental_memory=True,automatic_next_attempt=False)
     save(run/'pilot.json',meta)
@@ -199,16 +199,39 @@ def controller(campaign,args):
     return main(args)
 
 
+
+def extend_completed_grid(campaign, attempts=11):
+    """Authorized extension: append pending upstream cells, never rewrite results."""
+    from dream_rsi.env.trace_store import scaffold_grid_nodes
+    cfg=read(campaign/'campaign.json');path=campaign/'workspace/raw_scores.json';trace=read(path)
+    if set(cfg['branches'])!=set(NAMES) or attempts!=11:
+        raise ValueError('Only the authorized four-branch, eleven-attempt grid')
+    if cfg['development_seconds_per_attempt']!=1200:raise ValueError('Preserve20-minute budget')
+    old=trace['nodes'];ids={n['id'] for n in old}
+    if len(ids)!=len(old) or len(old)!=12 or any(n['status']!='done' for n in old):
+        raise ValueError('Requires the twelve completed original nodes; no reset or duplication')
+    appended=[n.to_dict() for n in scaffold_grid_nodes(campaign/'workspace',max_width=4,max_refine=10) if n.id not in ids]
+    if len(appended)!=32:raise ValueError('Expected exactly32 new pending cells')
+    trace['nodes']=old+appended
+    cfg.update(attempts_per_branch=attempts,total_nodes=44,
+        user_authorization='User explicitly extended existing seeded20-minute E0 to4 branches times11 attempts; preserve12 completed and add32',
+        extension_utc=utc())
+    save(path,trace);save(campaign/'campaign.json',cfg)
+    return {'preserved':len(old),'appended':len(appended),'total':len(trace['nodes'])}
+
+
 def supervise(campaign):
     cfg=read(campaign/'campaign.json');w=campaign/'workspace'
+    attempts=int(cfg['attempts_per_branch']);expected=4*attempts
+    if attempts not in (3,11):raise ValueError('Unconfigured attempt count')
     env={**os.environ,'DQI_INDEPENDENT_BRANCHES':'1','CLAUDE_EXEC_TIMEOUT_SEC':'1200',
          'DRSI_PRESERVE_DRAFTS':'1','DRSI_HISTORY_SEED_MODE':'copy',
          'DRSI_EVAL_PYTHON':str(HOST/'.dfthcsos-venv/bin/python')}
     entry=[str(HOST/'.venv/bin/python'),'-u',str(Path(__file__).resolve()),'controller',str(campaign)]
     save(campaign/'status.json',{'status':'exploring','pid':os.getpid(),'branches':4,
-         'attempts_per_branch':3,'budget':12,'development_seconds_per_attempt':1200})
+         'attempts_per_branch':attempts,'budget':expected,'development_seconds_per_attempt':1200})
     command=entry+['explore','run','-w',str(w),'-a','claude','--policy-source','baseline','--cycle','0',
-      '--branches','4','--refine','2','--max-workers','4','--eval-program','artifact/program.py',
+      '--branches','4','--refine',str(attempts-1),'--max-workers','4','--eval-program','artifact/program.py',
       '--eval-timeout','172800','--no-explore-shell','--direction-mode','off',
       '--problem',str(HOST/'tasks/dfthcsos/dfthcsos.txt'),
       '--evaluator',str(HOST/'tasks/dfthcsos/evaluator.py'),
@@ -216,8 +239,8 @@ def supervise(campaign):
     with (campaign/'exploration.log').open('a') as log:code=subprocess.call(command,cwd=HOST,env=env,stdout=log,stderr=subprocess.STDOUT)
     if code:raise RuntimeError(f'Exploration engine exited {code}; own nodes retained')
     nodes=read(w/'raw_scores.json').get('nodes',[])
-    if len(nodes)!=12:raise RuntimeError('Incomplete E0; refusing early dreaming')
-    save(campaign/'status.json',{'status':'dreaming','pid':os.getpid(),'completed_nodes':12})
+    if len(nodes)!=expected or any(n.get('status')!='done' for n in nodes):raise RuntimeError('Incomplete E0; refusing early dreaming')
+    save(campaign/'status.json',{'status':'dreaming','pid':os.getpid(),'completed_nodes':expected})
     with (campaign/'dreaming.log').open('a') as log:
         code=subprocess.call(entry+['learning','discover','-w',str(w),'-a','claude','--rounds','3',
           '--retry-rounds','1','--max-retry-batches','1','--eval-timeout','3600','--max-workers','1'],cwd=HOST,env=env,stdout=log,stderr=subprocess.STDOUT)
@@ -226,7 +249,7 @@ def supervise(campaign):
     jobs=sorted((w/'learning').glob('*/manifest.json'))
     if not jobs:raise RuntimeError('No actual policy learning manifest')
     policy=promote_method_to_workspace(jobs[-1].parent,w)
-    save(campaign/'status.json',{'status':'level_complete','completed_nodes':12,
+    save(campaign/'status.json',{'status':'level_complete','completed_nodes':expected,
          'dreaming':'complete','promoted_policy':str(policy),'next_level':'E1 not authorized; stopped'})
 
 
