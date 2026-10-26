@@ -247,7 +247,12 @@ Diagnostics have access to `ARTIFACT_DIR` (their frozen own helper bundle), the
 ordinary `TEST_OUTPUT_DIR` and pinned official DQI package. They have neither
 network access nor access to other runs or credentials.
 
-All benchmark supervisors in a shared budget group must configure the same
+Chemistry and DQI use separate daily budgets by default: each has12 active
+hours/36saved sessions and its own reported-cost ceiling. Preserve all prior
+usage when changing allocation policy. Optional pooling is only enabled when
+explicitly requested.
+
+If benchmark supervisors are intentionally placed in a shared budget group, configure the same
 `service.budget_group_roots`, `service.budget_group_lock` and daily ceilings.
 Admissions take that common lock and include every peer's durable ledger and
 in-flight reservations, so adding a benchmark does not multiply the daily cap.

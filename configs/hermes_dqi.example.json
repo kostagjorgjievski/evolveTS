@@ -4,30 +4,55 @@
   "task": "dqi",
   "task_root": "/path/to/host-with-official-dqi-setup",
   "provider": {
-    "backend": "hermes", "name": "minimax",
+    "backend": "hermes",
+    "name": "minimax",
     "credential_file": "/path/to/private/minimax.env",
-    "requested_model": "MiniMax-M3.1-Flash", "requested_effort": "medium",
-    "hermes_bin": "/path/to/pinned/hermes", "hermes_pin": "v0.22.5",
-    "provider_name": "seeder_minimax", "wire_transport": "anthropic_messages"
+    "requested_model": "MiniMax-M3.1-Flash",
+    "requested_effort": "medium",
+    "hermes_bin": "/path/to/pinned/hermes",
+    "hermes_pin": "v0.22.5",
+    "provider_name": "seeder_minimax",
+    "wire_transport": "anthropic_messages"
   },
   "reproducer": {
-    "backend": "hermes", "name": "kimi_proxy",
+    "backend": "hermes",
+    "name": "kimi_proxy",
     "credential_file": "/path/to/private/kimi-proxy.env",
-    "requested_model": "k3.1-pro", "requested_effort": "medium",
-    "hermes_bin": "/path/to/pinned/hermes", "hermes_pin": "v0.22.5",
-    "provider_name": "seeder_kimi_proxy", "wire_transport": "anthropic_messages"
+    "requested_model": "k3.1-pro",
+    "requested_effort": "medium",
+    "hermes_bin": "/path/to/pinned/hermes",
+    "hermes_pin": "v0.22.5",
+    "provider_name": "seeder_kimi_proxy",
+    "wire_transport": "anthropic_messages"
   },
   "search_credential_file": "/path/to/private/minimax.env",
-  "budgets": {"session_seconds": 1200, "daily_model_seconds": 43200, "daily_sessions": 36, "daily_reported_usd": 25},
-  "service": {
-    "enabled": false, "parallel_scout_reproducer": true,
-    "continuous_discovery": true, "follow_up_hypotheses": true,
-    "min_free_gib": 3, "poll_seconds": 60,
-    "budget_group_lock": "/path/to/shared/research-budget.lock",
-    "budget_group_roots": ["/path/to/chemistry-research", "/path/to/dqi-research"]
+  "budgets": {
+    "session_seconds": 1200,
+    "daily_model_seconds": 43200,
+    "daily_sessions": 36,
+    "daily_reported_usd": 25
   },
-  "agenda": {"default_budgets": {"max_model_seconds": 14400, "max_sessions": 12, "max_usd": 5}},
-  "topics": ["Independently research, reproduce and officially validate source-backed DQI improvements from public competition Code notebooks and primary literature."],
+  "service": {
+    "enabled": false,
+    "parallel_scout_reproducer": true,
+    "continuous_discovery": true,
+    "follow_up_hypotheses": true,
+    "min_free_gib": 3,
+    "poll_seconds": 60
+  },
+  "agenda": {
+    "default_budgets": {
+      "max_model_seconds": 14400,
+      "max_sessions": 12,
+      "max_usd": 5
+    }
+  },
+  "topics": [
+    "Independently research, reproduce and officially validate source-backed DQI improvements from public competition Code notebooks and primary literature."
+  ],
   "public_inputs": [],
-  "research": {"blocked_hosts": [], "allow_network_fetch": true}
+  "research": {
+    "blocked_hosts": [],
+    "allow_network_fetch": true
+  }
 }
