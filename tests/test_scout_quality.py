@@ -109,3 +109,19 @@ def test_known_packet_hashes_detect_rehosted_source_without_exposing_paths(tmp_p
     assert p['duplicate_candidates'][0]['shared_content_hashes']==['a'*64]
     assert p['handoff_status']=='ready_for_review' # duplicate is advisory, never auto rejection
     s.close()
+
+
+def test_missing_citation_feedback_and_repair_are_auditable(tmp_path):
+    job,s,a=setup(tmp_path)
+    s.record_hypothesis({'id':'bad','status':'active','source_urls':['https://example.org/missing-README.md']})
+    q.refresh_citation_issues(s)
+    assert q.pending_issues(s)[0]['missing_urls']==['https://example.org/missing-README.md']
+    d=ToolDispatcher(s,SimpleNamespace(task_id='dqi'),{},job)
+    fail=d.execute('record_scout_packet',{**a,'hypothesis_id':'bad'})
+    assert fail['status']=='error' and fail['scout_issue']['missing_urls']
+    assert 'https://example.org/missing-README.md' in fail['error']
+    fix=d.execute('repair_hypothesis_citations',{'hypothesis_id':'bad','source_urls':['https://example.org/original'],'reason':'Original exact source fetched under this URL; checked version'})
+    assert fix['status']=='ok' and not q.pending_issues(s)
+    assert s.list_events('hypothesis_citations_repaired')[0]['original_source_urls']==['https://example.org/missing-README.md']
+    assert d.execute('record_scout_packet',{**a,'hypothesis_id':'bad'})['status']=='ok'
+    s.close()

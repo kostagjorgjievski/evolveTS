@@ -99,6 +99,16 @@ def build_prepared_context(job, store, adapter, config, job_dir=None) -> str:
             lines.append(f"  reject when: {hypothesis['rejection_conditions'] or 'unspecified'}")
         lines.append('')
 
+    from .scout_quality import pending_issues, refresh_citation_issues
+    refresh_citation_issues(store)
+    issues=pending_issues(store)
+    if issues:
+        import json
+        lines.extend(['## Repair blocked scout handoffs before further broad research',
+                      'These are exact host-recorded citation errors, not scientific rejections. Resolve the listed source/version mismatch and resubmit the packet.'])
+        lines.extend(json.dumps(issue,sort_keys=True) for issue in issues)
+        lines.append('')
+
     experiments = store.list_experiments()
     if experiments:
         lines.append('## Experiments so far (including failures — do not repeat them blindly)')

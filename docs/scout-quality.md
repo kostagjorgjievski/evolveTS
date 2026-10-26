@@ -78,3 +78,28 @@ The report separates legacy and v2 jobs, scout-created packets, independent revi
 corrections, provider failures and model seconds. Jobs upgraded in place can contain
 legacy work, so their full lifetime totals must not be interpreted as v2-only cost.
 No extra paid evaluation runs, budgets or campaign seed installations are enabled.
+
+## Citation repair and model replacement
+
+A missing-citation failure now returns `scout_issue` with exact URLs, same-filename
+receipt candidates from the same job, and a concrete repair action. Candidates
+are suggestions, never automatic equivalence between different versions. Prepared
+context reconstructs unresolved citation failures even for older jobs, and asks
+the scout to repair them before broad searching. `repair_hypothesis_citations`
+requires fetched, hashed replacement URLs and a reason; it retains the original
+list in an audit event. A successful correction does not certify interpretation;
+the scout must resubmit its packet and the independent reproducer still checks it.
+
+Metrics separately report citation failures, unresolved-dependency packets,
+unfinished checkpoints, source-backed rejection decisions, reviewer corrections,
+and official reproduction outcomes. Source-backed rejection means citations were
+present; the science can still be wrong and remains reviewable.
+
+The live operator replaced unavailable Kimi reproduction with direct BigModel
+GLM-5.3 at max effort. Both use the same role, durable investigations and official
+gates. Per-job provider routing updates only at a session boundary. BigModel
+workers share existing capacity admission and a local transport proxy pins model
+and max effort on the actual request; provider request logs contain metadata only.
+Provider-only shelved work may be resumed after the authorized provider switch,
+with drafts, time/cost ledgers and retry evidence preserved. Scientific rejections
+and completed investigations are not reopened by that recovery.

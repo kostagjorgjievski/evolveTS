@@ -131,3 +131,18 @@ def test_full_own_final_receipts_inherited_without_old_campaign(tmp_path):
 def test_real_integration_test_also_establishes_productive_development():
     assert pilot.productive_development([{'type':'AssistantMessage','data':{'content':[{'name':'mcp__acceptance__integration_test'}]}}])
     assert not pilot.productive_development([{'type':'AssistantMessage','data':{'content':[{'name':'mcp__acceptance__validate_candidate'}]}}])
+
+
+def test_provider_replacement_persists_on_later_attempts(tmp_path,monkeypatch):
+    import dfthcsos_opus_prepared as prepared
+    def initialize(run):
+        (run/'worker/explore_b0/attempt_00/artifact').mkdir(parents=True)
+        (run/'private').mkdir();return {}
+    monkeypatch.setattr(prepared,'initialize',initialize)
+    seed=tmp_path/'seed';(seed/'source-bundle').mkdir(parents=True)
+    (seed/'source-bundle/program.py').write_text('seed')
+    pilot.save(seed/'MANIFEST.json',{'development':{'score':4},'confirmation':{'score':4}})
+    c=tmp_path/'campaign';pilot.save(c/'campaign.json',{'branches':{'kimi_thc':{'seed':str(seed),
+        'provider':'glm','model':'glm-5.3','effort':'max','credential_file':'glm.env'}}})
+    run=pilot.initialize_attempt(c,'kimi_thc',2);meta=pilot.read(run/'pilot.json')
+    assert (meta['provider'],meta['worker_model'],meta['effort'],meta['credential_file'])==('glm','glm-5.3','max','glm.env')

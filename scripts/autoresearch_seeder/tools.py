@@ -124,6 +124,11 @@ TOOL_SCHEMAS['record_scout_review'] = {'type':'object','properties':{
     'required':['fingerprint','outcome','source_urls','mistakes','first_test','next_action'],'additionalProperties':False}
 TOOL_DESCRIPTIONS['record_scout_review']='Reproducer records independent audit of an existing scout packet against original fetched sources, corrections, cheapest test and next action. Never certifies a seed.'
 
+TOOL_SCHEMAS['repair_hypothesis_citations']={'type':'object','properties':{'hypothesis_id':{'type':'string'},
+    'source_urls':{'type':'array','items':{'type':'string'}},'reason':{'type':'string'}},
+    'required':['hypothesis_id','source_urls','reason'],'additionalProperties':False}
+TOOL_DESCRIPTIONS['repair_hypothesis_citations']='Correct an existing hypothesis citation list to exact fetched, hashed URLs after checking source/version identity. Records original URLs and reason; never edits source receipts or certifies interpretation. Then resubmit the scout packet.'
+
 
 class AccessDenied(ValueError):
     """The configured access policy refuses this source."""
@@ -333,6 +338,7 @@ class ToolDispatcher:
                                       'url': arguments.get('url') if isinstance(arguments,dict) else None,
                                       'detail': str(exc)[:2000]})
             return {'status': 'error', 'tool': name, 'error': str(exc),
+                    **({'scout_issue':exc.scout_issue} if hasattr(exc,'scout_issue') else {}),
                     **({'retrieval_status':'unresolved', 'guidance':'Preserve this exact URL/error. Try the original notebook source, public dataset file list/download, or referenced upstream repository. A failed request does not establish an account requirement; record unresolved dependencies in your scout packet.'} if name in ('fetch_source','fetch_repository') else {})}
 
     def _research_path(self, relative, write=False):
@@ -475,6 +481,10 @@ class ToolDispatcher:
         return {'recorded': args['url'], 'status': 'blocked',
                 'note': 'Continue research with accessible sources; do not attempt to '
                         'bypass the restriction through any other path.'}
+
+    def _tool_repair_hypothesis_citations(self,args):
+        from .scout_quality import repair_citations
+        return repair_citations(self.store,args)
 
     def _tool_record_scout_review(self,args):
         from .scout_quality import review

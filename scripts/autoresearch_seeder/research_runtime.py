@@ -54,8 +54,10 @@ def _create_job(root, record, research):
         target_budgets = {'model_session_seconds': record['budgets']['max_model_seconds'],
                           'max_total_cost_usd': record['budgets']['max_usd']}
         budget_changed = any(existing['budgets'].get(k) != v for k, v in target_budgets.items())
+        target_provider=research.get('reproducer',research['provider'])
+        routing_changed=existing.get('provider')!=target_provider
         follow_up_changed = any(existing['validation'].get(k) != v for k,v in follow_up_validation.items())
-        if not existing.get('validation',{}).get('deferred_development') or budget_changed or follow_up_changed or not existing.get('research',{}).get('defer_provider_retries'):
+        if not existing.get('validation',{}).get('deferred_development') or budget_changed or routing_changed or follow_up_changed or not existing.get('research',{}).get('defer_provider_retries'):
             from .controller import _process_alive
             lease_path=job/'private/lease.json'
             lease=json.loads(lease_path.read_text()) if lease_path.exists() else {}
@@ -68,6 +70,7 @@ def _create_job(root, record, research):
             existing.setdefault('research',{})['defer_provider_retries']=True
             existing['validation'].update(follow_up_validation)
             existing['budgets'].update(target_budgets)
+            existing['provider']=copy.deepcopy(target_provider)
             existing['budgets']['job_wall_clock_seconds'] = max(
                 existing['budgets']['job_wall_clock_seconds'], record['budgets']['max_model_seconds'] * 4)
             atomic_write(config_path,json.dumps(existing,indent=2))
@@ -253,7 +256,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                               'Call propose_hypothesis with explicit source_urls (actual fetched URLs), then '
                               'save a precise decision/next action. Finish after a useful shortlist; '
                               'a separate reproducer continues your durable job. No official validation in this role.\n'
-                              'SCOUT V2: Read worker/known-public-methods.json before exploring. Shared sources are only duplicate candidates, not proof of the same method. '
+                              'SCOUT V2: Repair pending citation/packet errors in prepared context before doing more broad searching. Read worker/known-public-methods.json before exploring. Shared sources are only duplicate candidates, not proof of the same method. '
                               'Within this checkpoint call record_scout_packet after propose_hypothesis: exact original code sections, fetched dependencies, compatibility, uncertainty, cheapest falsifying test and rejection conditions. '
                               'For DQI compare source-claimed R,Q,T with the tool-computed R*Q^2*T; do not rank by Toffolis alone. For chemistry use the actual task objective, not the DQI formula. '
                               'Distinguish source claims, predictions, diagnostics and official receipts. Never discard on predicted cost alone. '
@@ -275,16 +278,29 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                     float(research.get('budgets', {}).get('session_seconds', 1200)))
                 admission=contextlib.nullcontext()
                 capacity=research.get('provider_capacity_module')
-                if capacity and provider.get('name')=='kimi_proxy':
+                if capacity and provider.get('name') in ('kimi_proxy','glm'):
                     import importlib.util
                     spec=importlib.util.spec_from_file_location('hermes_provider_capacity',capacity)
                     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-                    admission=module.slot('kimi_proxy',job)
+                    admission=module.slot(provider['name'],job)
                 import time
                 waiting=time.monotonic()
                 with admission:
                     waited=time.monotonic()-waiting
-                    result=backend.run(brief + prompt, tools, workspace, budget)
+                    proxy=None
+                    if capacity and provider.get('name')=='glm':
+                        # Pin the actual Anthropic-compatible wire request, not just a profile label.
+                        proxy_path=Path(capacity).with_name('effort_proxy.py')
+                        spec=importlib.util.spec_from_file_location('hermes_glm_effort_proxy',proxy_path)
+                        proxy_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(proxy_module)
+                        endpoint,key,_=backend._endpoint(backend._credentials())
+                        proxy,url=proxy_module.start(key,job/'private/provider-requests.jsonl',provider='glm',
+                            upstream=endpoint,effort=provider['requested_effort'],model=provider['requested_model'])
+                        backend.provider['endpoint_url']=url
+                    try:result=backend.run(brief + prompt, tools, workspace, budget)
+                    finally:
+                        if proxy is not None:proxy.shutdown()
+
                 result.admission_wait_seconds=waited
                 return result
         return Routed()

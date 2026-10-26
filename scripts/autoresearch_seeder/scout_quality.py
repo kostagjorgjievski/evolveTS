@@ -10,6 +10,45 @@ TEXT_FIELDS = ('mechanism', 'code_sections', 'compatibility', 'uncertainty',
                'first_test', 'rejection_conditions', 'next_action')
 
 
+class PacketCitationError(ValueError):
+    def __init__(self,hypothesis_id,missing,alternatives):
+        self.scout_issue={'category':'missing_citation_receipt','hypothesis_id':hypothesis_id,
+            'missing_urls':missing,'possible_existing_receipts':alternatives,
+            'next_action':'Repair these exact citations before more broad searching: fetch each original URL, or cite the exact already-fetched source URL in a corrected hypothesis after verifying it is the same intended source/version. Do not silently equate mirrors or versions. Then resubmit record_scout_packet.'}
+        super().__init__('Missing fetched, hashed citation receipts: '+', '.join(missing))
+
+
+def pending_issues(store):
+    pending={}
+    for event in store.list_events():
+        if event['kind']=='scout_packet_issue':pending[event['hypothesis_id']]=event
+        elif event['kind']=='scout_packet':pending.pop(event['packet']['hypothesis_id'],None)
+        elif event['kind']=='hypothesis_citations_repaired':pending.pop(event['hypothesis_id'],None)
+    return list(pending.values())
+
+
+def refresh_citation_issues(store):
+    known={e['hypothesis_id']:e.get('missing_urls') for e in pending_issues(store)}
+    for h in store.list_hypotheses():
+        if h.get('status') not in ('active',None):continue
+        missing=[u for u in h.get('source_urls',[]) if not store.get_source(u)
+                 or store.get_source(u).get('status')!='accessed' or not store.get_source(u).get('content_sha256')]
+        if missing and known.get(h['id'])!=missing:
+            store.event('scout_packet_issue',PacketCitationError(h['id'],missing,[]).scout_issue)
+
+
+def repair_citations(store,args):
+    if set(args)!={'hypothesis_id','source_urls','reason'} or not args['reason'].strip():raise ValueError('Hypothesis, fetched source_urls and correction reason required')
+    h=store.get_hypothesis(args['hypothesis_id'])
+    if not h:raise ValueError('Unknown hypothesis')
+    if not args['source_urls'] or any(not store.get_source(u) or store.get_source(u).get('status')!='accessed'
+        or not store.get_source(u).get('content_sha256') for u in args['source_urls']):raise ValueError('Every replacement citation must have a fetched, hashed receipt')
+    store.event('hypothesis_citations_repaired',{'hypothesis_id':h['id'],'original_source_urls':h.get('source_urls',[]),
+        'new_source_urls':args['source_urls'],'reason':args['reason'],'label':'model correction; original receipts retained; interpretation still needs independent review'})
+    h['source_urls']=args['source_urls'];store.record_hypothesis(h)
+    return {'recorded':True,'next_action':'Resubmit record_scout_packet for this hypothesis; certification unchanged'}
+
+
 def known_methods(facts):
     """Only already scope-filtered knowledge may enter a worker's index."""
     result=[]
@@ -56,8 +95,17 @@ def packet(store, args, task, known=()):
             unresolved.append(url);continue
         citations.append({k:source.get(k,'') for k in
                           ('url','content_sha256','license','attribution')})
-    if any(u not in {s['url'] for s in citations} for u in urls):
-        raise ValueError('Every hypothesis citation must have a fetched, hashed receipt')
+    missing=[u for u in urls if u not in {s['url'] for s in citations}]
+    if missing:
+        from urllib.parse import urlparse,parse_qs,unquote
+        def filename(url):
+            parsed=urlparse(url);return unquote(parse_qs(parsed.query).get('filename',[parsed.path])[0]).rsplit('/',1)[-1]
+        names={filename(u) for u in missing}
+        alternatives=[{'url':v['url'],'content_sha256':v['content_sha256']} for v in store.list_sources('accessed')
+                      if v.get('content_sha256') and filename(v['url']) in names][:12]
+        error=PacketCitationError(hypothesis['id'],missing,alternatives)
+        store.event('scout_packet_issue',error.scout_issue)
+        raise error
     estimates=[]
     for entry in args.get('resource_estimates',[]):
         if task!='dqi':raise ValueError('Resource formula available only for DQI')
@@ -101,7 +149,7 @@ def checkpoint(store, job, role):
     result={'version':VERSION,'utc':utc(),'role':role,'packet_count':len(packets),
         'handoff_complete':bool(packets and packets[-1]['packet']['handoff_status']=='ready_for_review'),
         'latest_packet':packets[-1]['packet'] if packets else None,
-        'missing_packet':not bool(packets),'rejection_audit_required':bool(rejects and int(digest(str(job))[:8],16)%5==0),
+        'missing_packet':not bool(packets),'pending_citation_issues':pending_issues(store),'rejection_audit_required':bool(rejects and int(digest(str(job))[:8],16)%5==0),
         'note':'Structure is checked, scientific claims are not certified. Audit sample is deterministic 20%, not an extra paid authorization.'}
     store.event('scout_checkpoint',{'role':role,'packet_present':bool(packets),'handoff_complete':result['handoff_complete']})
     atomic_write(Path(job)/'worker/scout-checkpoint.json',json.dumps(result,indent=2))
@@ -122,14 +170,23 @@ def metrics(root):
             s=summary['cohorts'].setdefault(cohort,dict(jobs=0,packets=0,ready_packets=0,duplicate_packets=0,
                  hypotheses=0,decisions=0,provider_errors=0,fetch_errors=0,model_seconds=0,verified_exports=0,
                  reviews=0,review_corrections=0,rejected_reviews=0,seed_elapsed_seconds=[],
-                 scout_checkpoints=0,complete_scout_checkpoints=0,ready_scout_packets=0))
+                 scout_checkpoints=0,complete_scout_checkpoints=0,ready_scout_packets=0,
+                 citation_failures=0,unresolved_dependency_packets=0,source_backed_rejections=0))
             fingerprints.setdefault(cohort,set())
             s['jobs']+=1;s['hypotheses']+=con.execute('select count(*) from hypotheses').fetchone()[0]
             s['decisions']+=con.execute('select count(*) from decisions').fetchone()[0]
             s['model_seconds']+=con.execute("select coalesce(sum(seconds),0) from budget_ledger where category='model'").fetchone()[0]
+            # A source-backed rejection is a documented negative lead, not proof of correctness.
+            source_urls={u for u, in con.execute("select url from sources where status='accessed'")}
+            hs={i:json.loads(v) for i,v in con.execute('select id,payload from hypotheses')}
+            for v, in con.execute("select payload from decisions where action='reject'"):
+                d=json.loads(v);h=hs.get(d.get('hypothesis_id'),{})
+                s['source_backed_rejections']+=bool(h.get('source_urls') and set(h['source_urls'])<=source_urls)
             for k,v in events:
                 if k=='scout_packet':
                     p=v['packet'];fingerprints[cohort].add(p['fingerprint']);s['packets']+=1;s['ready_packets']+=p['handoff_status']=='ready_for_review';s['duplicate_packets']+=p.get('duplicate_packet',False)
+                s['citation_failures']+=k=='scout_packet_issue'
+                if k=='scout_packet':s['unresolved_dependency_packets']+=v['packet']['handoff_status']=='needs_dependency_recovery'
                 if k=='scout_checkpoint' and v['role']=='scout':
                     s['scout_checkpoints']+=1;s['complete_scout_checkpoints']+=v['handoff_complete']
                 if k=='scout_packet' and v['packet'].get('recorded_role')=='scout' and v['packet']['handoff_status']=='ready_for_review':

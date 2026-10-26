@@ -43,7 +43,10 @@ def initialize_attempt(campaign,name,index):
     cfg=read(campaign/'campaign.json');run=location(campaign,name,index)
     meta=prepared.initialize(run)
     provider,model,effort,credential=SPECS[name.split('_')[0]]
-    seed=cfg['branches'][name]['seed']
+    spec=cfg['branches'][name]
+    provider=spec.get('provider',provider);model=spec.get('model',model);effort=spec.get('effort',effort)
+    credential=spec.get('credential_file',credential)
+    seed=spec['seed']
     artifact=run/'worker/explore_b0/attempt_00/artifact'
     shutil.rmtree(artifact);shutil.copytree(Path(seed)/'source-bundle',artifact)
     manifest=read(Path(seed)/'MANIFEST.json')
