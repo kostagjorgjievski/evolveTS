@@ -11,6 +11,7 @@ import shlex
 import socket
 import time
 import urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 
 from .models import (BudgetExhausted, Experiment, Source, ToolInfrastructureError,
@@ -422,6 +423,23 @@ class ToolDispatcher:
     def _tool_report_access_needed(self, args):
         if set(args) != {'url', 'reason'}:
             raise ValueError('Exactly url and reason required')
+        # A model's failed Kaggle fetch is not evidence of an authentication ban.
+        # Preserve its claim as unverified and hand recovery to the source watcher.
+        host = urlparse(args['url']).hostname or ''
+        configured_blocks = getattr(getattr(self, 'fetcher', None), 'blocked', set())
+        policy_denied = any(host == b or host.endswith('.'+b) for b in configured_blocks)
+        if host in ('kaggle.com', 'www.kaggle.com') and not policy_denied:
+            existing = self.store.get_source(args['url'])
+            record = existing or Source(url=args['url'], kind='unknown').record()
+            record = {**record, 'status': 'retrieval_unresolved',
+                      'access_limitation': args['reason'], 'access_claim_verified': False}
+            self.store.record_source(record)
+            self.store.event('source_recovery_needed', {'url': args['url'],
+                'unverified_model_claim': args['reason']})
+            return {'recorded': args['url'], 'status': 'retrieval_unresolved',
+                    'note': 'Do not infer an account requirement from a JS shell or404. '
+                    'The public source watcher must verify listing access and retry. '
+                    'Use retrieved public listing receipts; obey actual access controls.'}
         existing = self.store.get_source(args['url'])
         record = (existing or Source(url=args['url'], kind='unknown').record())
         record = {**record, 'url': args['url'], 'status': 'blocked',
