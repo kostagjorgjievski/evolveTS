@@ -71,3 +71,15 @@ def test_dqi_confirmation_detects_mutation_during_official_check(tmp_path):
     ev.run_process=change
     with pytest.raises(ToolInfrastructureError,match='changed during confirmation'):
         dqi_adapter.validate(adapter,artifact.parent,tmp_path/'final','confirmation',{},tmp_path/'dev/submission')
+
+
+def test_failed_circuit_is_losslessly_archived_without_losing_receipts(tmp_path):
+    import gzip,hashlib
+    original=b'failed circuit fixture '*10000
+    (tmp_path/'dqi.kmb').write_bytes(original)
+    (tmp_path/'receipt.json').write_text('{"status":"FAIL"}')
+    result=dqi_adapter.archive_failed_output(tmp_path,minimum_bytes=0)
+    assert result['sha256']==hashlib.sha256(original).hexdigest()
+    assert gzip.open(tmp_path/'dqi.kmb.gz','rb').read()==original
+    assert not (tmp_path/'dqi.kmb').exists()
+    assert (tmp_path/'receipt.json').read_text()=='{"status":"FAIL"}'

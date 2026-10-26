@@ -6,6 +6,8 @@ Confirmation grades the saved development circuit, without regenerating it.
 """
 import contextlib
 import fcntl
+import gzip
+import hashlib
 import importlib.util
 import json
 import os
@@ -18,6 +20,33 @@ from pathlib import Path
 from .models import ToolInfrastructureError, file_digest
 
 FINAL_SALT = 'literature-reproduction-acceptance-held-out-v1'
+
+
+def archive_failed_output(output, minimum_bytes=16*2**20):
+    """Keep exact failed-circuit evidence without retaining a huge raw binary."""
+    source=Path(output)/'dqi.kmb'
+    if not source.is_file() or source.is_symlink() or source.stat().st_size<minimum_bytes:
+        return None
+    before=source.stat();target=source.with_suffix('.kmb.gz');tmp=target.with_suffix('.gz.tmp')
+    sha=hashlib.sha256()
+    try:
+        with source.open('rb') as src,tmp.open('wb') as raw,gzip.GzipFile(filename='',mode='wb',fileobj=raw,compresslevel=1,mtime=0) as dest:
+            while block:=src.read(1024*1024):sha.update(block);dest.write(block)
+        with gzip.open(tmp,'rb') as src:
+            if hashlib.file_digest(src,'sha256').hexdigest()!=sha.hexdigest():
+                raise ToolInfrastructureError('Failed-circuit archive hash mismatch')
+        after=source.stat()
+        if (after.st_ino,after.st_size,after.st_mtime_ns)!=(before.st_ino,before.st_size,before.st_mtime_ns):
+            raise ToolInfrastructureError('Failed circuit changed while archiving')
+        if tmp.stat().st_size>=before.st_size:return None
+        info={'sha256':sha.hexdigest(),'archive':str(target),'original_bytes':before.st_size,
+              'compressed_bytes':tmp.stat().st_size,'lossless':True}
+        os.replace(tmp,target)
+        (source.parent/'failed-circuit-archive.json').write_text(json.dumps(info,indent=2)+'\n')
+        source.unlink()
+        return info
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
@@ -139,4 +168,7 @@ def validate(adapter, attempt, output, which, config, submission_dir=None):
     except ToolInfrastructureError:
         raise
     except Exception as error:
-        return adapter._classify(error)
+        receipt=adapter._classify(error)
+        archive=archive_failed_output(output)
+        if archive:receipt['failed_circuit_archive']=archive
+        return receipt
