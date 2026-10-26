@@ -90,7 +90,13 @@ def test_dead_worker_fails_closed_without_duplicate_or_unbilled_retry(tmp_path):
     owner = ParallelOwner(tmp_path, cfg)
     owner.admit('scout', scout, launch)
     owner.reconcile(is_alive=lambda _: False)
-    assert (tmp_path/'PAUSE').exists()
+    assert not (tmp_path/'PAUSE').exists()
+    agenda=Investigations(tmp_path/'investigations.sqlite')
+    try:
+        assert agenda.get(scout['id'])['status']=='infrastructure_blocked'
+        assert agenda.get(repro['id'])['status'] in ('active','queued')
+    finally:agenda.close()
+    assert select_candidate(tmp_path,cfg,{})[1]['id']==repro['id']
     assert next(iter(owner.state['ledger'].values()))['model_seconds'] == 30
     assert not owner.state['active']
 

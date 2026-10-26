@@ -201,7 +201,19 @@ class ParallelOwner:
             write(work/'settled.json', entry)
             del self.state['active'][role]
             if not outcome['ok']:
-                (self.root/'PAUSE').write_text('Parallel worker failed; inspect preserved session result\n')
+                # Quarantine this owning investigation, not both independent lanes.
+                agenda=Investigations(self.root/'investigations.sqlite')
+                try:
+                    current=agenda.get(entry['investigation'])
+                    checkpoint={**current['checkpoint'],'infrastructure_failure':{
+                        'session_dir':str(work),'error_class':outcome.get('error_class','InterruptedWorker'),
+                        'requires_attention':True,'utc':utc()}}
+                    agenda.db.execute('UPDATE investigations SET status=?, checkpoint=? WHERE id=?',
+                        ('infrastructure_blocked',json.dumps(checkpoint),entry['investigation']))
+                    agenda.db.commit()
+                finally:agenda.close()
+                if self.config.get('service',{}).get('pause_on_worker_failure'):
+                    (self.root/'PAUSE').write_text('Parallel worker failed; inspect preserved session result\n')
             self.save()
 
     def admit(self, role, record, launcher=None):
@@ -347,6 +359,7 @@ def serve_parallel_locked(root, config, config_path=None):
                   'active_sessions': owner.state['active'], 'usage': owner.state['ledger'],
                   'role_usage':owner.state.get('role_ledger',{}),'scout_ahead_queue':owner.config.get('service',{}).get('scout_ahead_queue',False),
                   'investigations': records,
+                  'requires_attention':[r['id'] for r in records if r['status']=='infrastructure_blocked'],
                   'cost_note': 'In-flight time/session reservations included. USD unknown when provider omits billing.'}
         write(Path(root)/'status.json', status)
         write(Path(root)/'current-session.json', {'state': state, 'pid': os.getpid(),

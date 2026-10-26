@@ -501,7 +501,7 @@ class HermesBackend(Backend):
         model = self.provider.get('requested_model')
         command = [binary, '--usage-file', str(usage_path), 'chat', '--oneshot', '--quiet',
                    '--format', 'stream-json',
-                   '--max-turns', str(max(1,min(1000,int(budget.get('remaining_turns',1000))))),
+                   '--max-turns', '0',  # Upstream's explicit unlimited mode; host timer owns checkpoints.
                    '--query-file', str(prompt_path),
                    '--provider', f'custom:{self.provider_name}',
                    '--ignore-rules', '--toolsets', 'seeder', '--in', str(self.job_dir / 'worker')]
@@ -550,6 +550,13 @@ class HermesBackend(Backend):
             except ValueError:
                 result.usage = {'raw': usage_path.read_text()[:4000]}
         self._absorb_stream(stdout or '', result)
+        reason=str(result.usage.get('turn_exit_reason',''))
+        turn_checkpoint=(exit_code == 1 and result.usage.get('failed') is False
+                         and reason.startswith('max_iterations_reached('))
+        if turn_checkpoint:
+            checkpoint=True
+            exit_code=0
+            result.usage['checkpoint_reason']=reason
         if exit_code != 0 or result.usage.get('failed'):
             detail = provider_error_detail(stdout, stderr)
             result.error_detail = detail

@@ -52,12 +52,14 @@ def _create_job(root, record, research):
         config_path=Path(data['config_path'])
         existing=json.loads(config_path.read_text())
         target_budgets = {'model_session_seconds': record['budgets']['max_model_seconds'],
-                          'max_total_cost_usd': record['budgets']['max_usd']}
+                          'max_total_cost_usd': record['budgets']['max_usd'],
+                          'max_tool_calls': research.get('budgets',{}).get('max_tool_calls'),
+                          'max_web_searches': research.get('budgets',{}).get('max_web_searches')}
         budget_changed = any(existing['budgets'].get(k) != v for k, v in target_budgets.items())
         target_provider=research.get('reproducer',research['provider'])
         routing_changed=existing.get('provider')!=target_provider
         follow_up_changed = any(existing['validation'].get(k) != v for k,v in follow_up_validation.items())
-        if not existing.get('validation',{}).get('deferred_development') or budget_changed or routing_changed or follow_up_changed or not existing.get('research',{}).get('defer_provider_retries') or not existing.get('research',{}).get('require_evidence_review'):
+        if not existing.get('validation',{}).get('deferred_development') or budget_changed or routing_changed or follow_up_changed or not existing.get('research',{}).get('defer_provider_retries') or not existing.get('research',{}).get('require_evidence_review') or not existing.get('research',{}).get('time_bounded_calls'):
             from .controller import _process_alive
             lease_path=job/'private/lease.json'
             lease=json.loads(lease_path.read_text()) if lease_path.exists() else {}
@@ -69,6 +71,7 @@ def _create_job(root, record, research):
             existing.setdefault('validation',{})['deferred_development']=True
             existing.setdefault('research',{})['defer_provider_retries']=True
             existing['research']['require_evidence_review']=True
+            existing['research']['time_bounded_calls']=True
             existing['validation'].update(follow_up_validation)
             existing['budgets'].update(target_budgets)
             existing['provider']=copy.deepcopy(target_provider)
@@ -89,11 +92,14 @@ def _create_job(root, record, research):
     base.update(enabled=True, task=task)
     base['provider'] = research.get('reproducer', research['provider'])
     base.setdefault('research',{})['require_evidence_review']=True
+    base['research']['time_bounded_calls']=True
     base['validation']['deferred_development'] = True
     base['validation'].update(follow_up_validation)
     base['budgets'].update(model_session_seconds=total['max_model_seconds'],
                            job_wall_clock_seconds=max(14400, total['max_model_seconds'] * 4),
-                           max_total_cost_usd=total['max_usd'])
+                           max_total_cost_usd=total['max_usd'],
+                           max_tool_calls=research.get('budgets',{}).get('max_tool_calls'),
+                           max_web_searches=research.get('budgets',{}).get('max_web_searches'))
     base['research'].update(research.get('research',{}))
     base['research']['defer_provider_retries']=True
     base['research']['search_credential_file'] = research.get('search_credential_file', '')

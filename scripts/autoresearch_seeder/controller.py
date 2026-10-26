@@ -254,16 +254,17 @@ class Controller:
         session_used = job.get('session', {}).get('model_seconds', 0.0)
         return max(0.0, float(budgets['model_session_seconds']) - session_used)
 
-    def remaining_tool_calls(self) -> int:
+    def remaining_tool_calls(self):
+        if self.config['budgets']['max_tool_calls'] is None:return None
         used = self.store.tool_call_count()
         return max(0, int(self.config['budgets']['max_tool_calls']) - used)
 
     def _check_budgets(self) -> None:
         budgets = self.config['budgets']
         consumed = self.consumed()
-        if consumed['tool_calls'] >= int(budgets['max_tool_calls']):
+        if budgets['max_tool_calls'] is not None and consumed['tool_calls'] >= int(budgets['max_tool_calls']):
             raise BudgetExhausted('Tool-call budget exhausted')
-        if consumed['web_searches'] >= int(budgets['max_web_searches']):
+        if budgets['max_web_searches'] is not None and consumed['web_searches'] >= int(budgets['max_web_searches']):
             raise BudgetExhausted('Search budget exhausted')
         if consumed['usd'] >= float(budgets['max_total_cost_usd']):
             raise BudgetExhausted('Cost budget exhausted')

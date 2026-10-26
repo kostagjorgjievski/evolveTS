@@ -6,7 +6,8 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 
-# Every field must be a finite positive number. A job whose config lacks any
+# Time/cost/retry fields must be finite positive numbers. Materialized
+# time-bounded research may explicitly disable cumulative tool/search counts. A job whose config lacks any
 # of these can be initialized and inspected, but `run`/`resume` refuse to
 # launch a paid session.
 REQUIRED_BUDGETS = (
@@ -84,6 +85,9 @@ def validate(config: dict, *, require_enabled: bool = False) -> dict:
     if missing:
         raise ConfigError('Missing required budgets: ' + ', '.join(missing))
     for field in REQUIRED_BUDGETS:
+        if (field in ('max_tool_calls','max_web_searches') and budgets[field] is None
+                and config.get('research',{}).get('time_bounded_calls')):
+            continue
         _check_finite(budgets, field)
     provider = config.get('provider')
     if not isinstance(provider, dict):

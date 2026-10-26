@@ -104,7 +104,7 @@ def run_session(controller, transport) -> SessionOutcome:
         # Yield control back through the controller budget between batches.
         budget['session_seconds'] = max(1.0, min(controller.remaining_session_seconds(),remaining_total-(time.monotonic()-session_started)))
         budget['remaining_turns'] = controller.remaining_tool_calls()
-        if budget['remaining_turns'] <= 0:
+        if budget['remaining_turns'] is not None and budget['remaining_turns'] <= 0:
             budget_exhausted = True
             finished_reason = 'budget_exhausted'
             break
