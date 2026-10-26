@@ -38,7 +38,16 @@ def alive(entry):
         return False
 
 
-def role_of(root, record, task):
+def role_of(root, record, task, scout_ahead=False):
+    if scout_ahead and record['checkpoint'].get('role')!='reproducer' and record['checkpoint'].get('start_role')!='reproducer':
+        job=Path(root)/'jobs/autoresearch-seeder'/task/record['id']
+        from .store import ResearchStore
+        if not (job/'private/research.sqlite').exists():return 'scout'
+        store=ResearchStore(job/'private/research.sqlite')
+        try:
+            packets=store.list_events('scout_packet')
+            return 'reproducer' if packets and packets[-1]['packet']['handoff_status']=='ready_for_review' else 'scout'
+        finally:store.close()
     if record['consumed']['sessions'] or record['checkpoint'].get('start_role') == 'reproducer':
         return 'reproducer'
     job = Path(root)/'jobs/autoresearch-seeder'/task/record['id']
@@ -60,6 +69,20 @@ def select_candidate(root, config, active):
     try:
         records = agenda.list()
         busy_ids = {a['investigation'] for a in active.values()}
+        if config.get('agenda',{}).get('default_budgets',{}).get('max_sessions','unchanged') is None:
+            for record in records:
+                cap=record['budgets'].get('max_sessions')
+                if cap is None or record['id'] in busy_ids:continue
+                budgets={**record['budgets'],'max_sessions':None};status=record['status']
+                if (status=='shelved' and record['consumed']['sessions']>=cap
+                        and record['consumed']['model_seconds']<budgets['max_model_seconds']
+                        and record['consumed']['usd']<budgets['max_usd'] and record['stale_sessions']<2):
+                    status='active'
+                if record['status'] not in ('queued','active') and status!='active':continue
+                agenda.db.execute('UPDATE investigations SET budgets=?,status=? WHERE id=?',
+                    (json.dumps(budgets),status,record['id']))
+            agenda.db.commit();records=agenda.list()
+
         def cooldown_ready(record):
             checkpoint=record.get('checkpoint',{})
             if checkpoint.get('job_stage')!='retry_wait':return True
@@ -72,16 +95,16 @@ def select_candidate(root, config, active):
         for role in ('reproducer', 'scout'):
             if role not in active:
                 for record in candidates:
-                    if role_of(root, record, config['task']) == role:
+                    if role_of(root, record, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == role:
                         return role, record
         if 'scout' in active:
             return None
         # Backpressure: at most one completed scout waits for the reproducer.
-        if any(role_of(root, r, config['task']) == 'reproducer' for r in candidates):
+        if not config.get('service',{}).get('scout_ahead_queue') and any(role_of(root, r, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == 'reproducer' for r in candidates):
             return None
         item = enqueue_public_follow_up(root, config, agenda, records)
-        if item:
-            return ('reproducer', item) if 'reproducer' not in active else None
+        if item and 'reproducer' not in active:
+            return 'reproducer', item
         today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         topics = config.get('topics', [])
         seen = {r['topic'] for r in records if r['created_utc'].startswith(today)}
@@ -113,6 +136,25 @@ class ParallelOwner:
             ledger = self.root/'service-ledger.json'
             self.state = {'ledger': json.loads(ledger.read_text()) if ledger.exists() else {},
                           'active': {}, 'serial': 0}
+
+    def lane_usage(self,day,role):
+        lanes=self.state.setdefault('role_ledger',{})
+        if day not in lanes:
+            lanes[day]={r:{'sessions':0,'model_seconds':0.,'usd':0.} for r in ('scout','reproducer')}
+            entries=[]
+            for path in self.root.glob('parallel-sessions/*/settled.json'):
+                entry=json.loads(path.read_text())
+                if entry['day']==day:entries.append(entry)
+            entries.extend(e for e in self.state['active'].values() if e['day']==day)
+            for e in entries:
+                lane=lanes[day][e['role']];lane['sessions']+=1
+                lane['model_seconds']+=e.get('actual_model_seconds',e['reserved_seconds'])
+            # Pre-parallel history and unknown billed costs stay conservatively charged.
+            total=self.state['ledger'].get(day,{})
+            for key in ('sessions','model_seconds','usd'):
+                residual=max(0,total.get(key,0)-sum(v[key] for v in lanes[day].values()))
+                lanes[day]['reproducer'][key]+=residual
+        return lanes[day][role]
 
     def save(self):
         # This snapshot is authoritative on restart; ledger is a status mirror.
@@ -149,6 +191,9 @@ class ParallelOwner:
             # Keep its full reservation charged until its own recovery accounts it.
             if not outcome['ok'] and seconds == 0:
                 seconds = entry['reserved_seconds']
+            lane=self.lane_usage(entry['day'],role)
+            lane['model_seconds']+=seconds-entry['reserved_seconds']
+            lane['usd']+=max(0,after['usd']-before['usd'])
             used = self.state['ledger'][entry['day']]
             used['model_seconds'] += seconds-entry['reserved_seconds']
             used['usd'] += max(0, after['usd']-before['usd'])
@@ -175,7 +220,9 @@ class ParallelOwner:
         day = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         used = self.state['ledger'].setdefault(day, {'sessions': 0, 'model_seconds': 0., 'usd': 0.})
         limits = self.config['budgets']
-        combined = dict(used)
+        independent_scout=self.config.get('service',{}).get('scout_ahead_queue',False)
+        lane=self.lane_usage(day,role)
+        combined = dict(lane if independent_scout else used)
         for peer in self.config.get('service', {}).get('budget_group_roots', []):
             peer = Path(peer).resolve()
             if peer == self.root.resolve():
@@ -186,8 +233,8 @@ class ParallelOwner:
                     else json.loads(ledger.read_text()) if ledger.exists() else {})
             for key in combined:
                 combined[key] += data.get(day, {}).get(key, 0)
-        remaining = limits['daily_model_seconds']-combined['model_seconds']
-        if (role in self.state['active'] or combined['sessions'] >= limits['daily_sessions']
+        remaining = float('inf') if independent_scout and role=='scout' else limits['daily_model_seconds']-combined['model_seconds']
+        if (role in self.state['active'] or (limits['daily_sessions'] is not None and combined['sessions'] >= limits['daily_sessions'])
                 or remaining <= 10 or combined['usd'] >= limits['daily_reported_usd']):
             return False
         if any(e['investigation'] == record['id'] for e in self.state['active'].values()):
@@ -205,6 +252,8 @@ class ParallelOwner:
         entry = {'investigation': record['id'], 'role': role, 'day': day,
                  'before': record['consumed'], 'reserved_seconds': seconds+10,
                  'created_epoch': time.time(), 'started_utc': utc(), 'session_dir': str(work)}
+        lane['sessions']+=1
+        lane['model_seconds']+=entry['reserved_seconds']
         used['sessions'] += 1
         used['model_seconds'] += entry['reserved_seconds']
         self.state['active'][role] = entry
@@ -235,10 +284,12 @@ class ParallelOwner:
                 return state
         if shutil.disk_usage(self.root).free < self.config['service'].get('min_free_gib', 4)*2**30:
             return 'resource_wait'
+        unavailable=dict(self.state['active'])
         for _ in range(2):
-            selected = select_candidate(self.root, self.config, self.state['active'])
-            if selected is None or not self.admit(*selected):
-                break
+            selected = select_candidate(self.root, self.config, unavailable)
+            if selected is None:break
+            if not self.admit(*selected) and not self.config.get('service',{}).get('scout_ahead_queue'):break
+            unavailable[selected[0]]={'investigation':selected[1]['id']}
         return 'running' if self.state['active'] else 'idle_or_budget_wait'
 
 
@@ -294,6 +345,7 @@ def serve_parallel_locked(root, config, config_path=None):
         status = {'pid': os.getpid(), 'state': state, 'updated_utc': utc(),
                   'task': config['task'], 'mode': 'parallel_scout_reproducer',
                   'active_sessions': owner.state['active'], 'usage': owner.state['ledger'],
+                  'role_usage':owner.state.get('role_ledger',{}),'scout_ahead_queue':owner.config.get('service',{}).get('scout_ahead_queue',False),
                   'investigations': records,
                   'cost_note': 'In-flight time/session reservations included. USD unknown when provider omits billing.'}
         write(Path(root)/'status.json', status)

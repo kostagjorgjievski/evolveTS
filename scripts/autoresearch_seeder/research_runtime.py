@@ -222,7 +222,12 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                              and record.get('checkpoint', {}).get('role') in ('scout', 'reproducer'))
     prepared_follow_up = (record['origin'].startswith('public_hypothesis_follow_up:')
                           and record.get('checkpoint', {}).get('start_role') == 'reproducer')
-    role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished or prepared_follow_up else 'scout'
+    if research.get('service',{}).get('scout_ahead_queue'):
+        packets=controller.store.list_events('scout_packet')
+        ready=bool(packets and packets[-1]['packet']['handoff_status']=='ready_for_review')
+        role='reproducer' if ready or prepared_follow_up or record.get('checkpoint',{}).get('role')=='reproducer' else 'scout'
+    else:
+        role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished or prepared_follow_up else 'scout'
     _close(controller)
     provider = copy.deepcopy(research['provider'] if role == 'scout'
                              else research.get('reproducer', research['provider']))

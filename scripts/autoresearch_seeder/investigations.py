@@ -110,7 +110,7 @@ class Investigations:
     @staticmethod
     def _budget_remaining(record: dict) -> bool:
         budgets, consumed = record['budgets'], record['consumed']
-        return (consumed['sessions'] < budgets['max_sessions']
+        return ((budgets['max_sessions'] is None or consumed['sessions'] < budgets['max_sessions'])
                 and consumed['model_seconds'] < budgets['max_model_seconds']
                 and consumed['usd'] < budgets['max_usd'])
 
@@ -144,7 +144,7 @@ class Investigations:
         checkpoint['last_activity_digest'] = activity_digest or previous
         status = record['status'] if record['status'] == 'active' else 'active'
         reason = ''
-        if consumed['sessions'] >= record['budgets']['max_sessions']:
+        if record['budgets']['max_sessions'] is not None and consumed['sessions'] >= record['budgets']['max_sessions']:
             status, reason = 'shelved', 'session budget exhausted'
         elif consumed['model_seconds'] >= record['budgets']['max_model_seconds']:
             status, reason = 'shelved', 'model-time budget exhausted'

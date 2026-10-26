@@ -25,6 +25,7 @@ def validate_service(config):
         raise ValueError('Research and service must both be explicitly enabled')
     for key in ('session_seconds', 'daily_model_seconds', 'daily_sessions', 'daily_reported_usd'):
         value = config.get('budgets', {}).get(key)
+        if key=='daily_sessions' and value is None:continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError('Finite positive budget required: ' + key)
     for role in ('provider', 'reproducer'):
@@ -150,7 +151,7 @@ def wake(root, config, ledger, runner=_maybe_research_session):
         return {'state': 'stopped', 'reason': 'STOP requested'}
     if (root / 'PAUSE').exists():
         return {'state': 'paused', 'reason': 'PAUSE requested; no model calls'}
-    if used['sessions'] >= config['budgets']['daily_sessions'] or used['model_seconds'] >= config['budgets']['daily_model_seconds'] or used['usd'] >= config['budgets']['daily_reported_usd']:
+    if (config['budgets']['daily_sessions'] is not None and used['sessions'] >= config['budgets']['daily_sessions']) or used['model_seconds'] >= config['budgets']['daily_model_seconds'] or used['usd'] >= config['budgets']['daily_reported_usd']:
         return {'state': 'daily_budget_wait', 'reason': 'UTC-day admission limit; no model calls'}
     if shutil.disk_usage(root).free < float(service.get('min_free_gib', 4)) * 2**30:
         return {'state': 'resource_wait', 'reason': 'Insufficient free scratch disk; no model calls'}

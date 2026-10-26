@@ -110,3 +110,56 @@ def test_two_benchmark_roots_share_inflight_daily_admission(tmp_path):
     assert not chemistry.admit('reproducer',a,launch)
     assert not dqi.admit('reproducer',c,launch)
     assert sum(next(iter(o.state['ledger'].values()))['sessions'] for o in [chemistry,dqi])==2
+
+
+def test_continuous_scout_ignores_count_and_daily_time_but_not_reproducer_time(tmp_path):
+    cfg,repro,scout=make(tmp_path);cfg['budgets']['daily_sessions']=None
+    cfg['service']['scout_ahead_queue']=True
+    owner=ParallelOwner(tmp_path,cfg);day=datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    owner.state['ledger'][day]={'sessions':900,'model_seconds':200,'usd':0}
+    assert owner.admit('scout',scout,launch)
+    assert not owner.admit('reproducer',repro,launch)
+    assert owner.state['ledger'][day]['sessions']==901
+
+
+def test_continuous_discovery_not_blocked_by_reproducer_backlog(tmp_path):
+    cfg,repro,scout=make(tmp_path);cfg['service']['scout_ahead_queue']=True
+    cfg['topics']=['A genuinely different public research mechanism']
+    agenda=Investigations(tmp_path/'investigations.sqlite');agenda.shelve(scout['id'],'fixture');agenda.close()
+    active={'reproducer':{'investigation':repro['id']}}
+    selected=select_candidate(tmp_path,cfg,active)
+    assert selected and selected[0]=='scout'
+
+
+def test_no_session_count_limit_still_preserves_time_budget(tmp_path):
+    agenda=Investigations(tmp_path/'investigations.sqlite')
+    r=agenda.create('Long sequence',budgets={'max_sessions':None,'max_model_seconds':100})
+    for i in range(15):r=agenda.record_session(r['id'],model_seconds=1,activity_digest=str(i))
+    assert r['status']=='active' and r['consumed']['sessions']==15
+    r=agenda.record_session(r['id'],model_seconds=100,activity_digest='last')
+    assert r['status']=='shelved';agenda.close()
+
+
+def test_only_ready_packet_enters_kimi_queue(tmp_path):
+    from scripts.autoresearch_seeder.parallel_service import role_of
+    from scripts.autoresearch_seeder.store import ResearchStore
+    cfg,repro,scout=make(tmp_path)
+    job=tmp_path/'jobs/autoresearch-seeder/dfthcsos'/scout['id']
+    store=ResearchStore(job/'private/research.sqlite')
+    store.record_hypothesis({'id':'hyp','mechanism':'unreviewed idea'})
+    assert role_of(tmp_path,scout,'dfthcsos',True)=='scout'
+    store.event('scout_packet',{'packet':{'handoff_status':'ready_for_review'}})
+    assert role_of(tmp_path,scout,'dfthcsos',True)=='reproducer'
+    store.close()
+
+
+def test_removing_count_cap_keeps_active_investigation_unchanged_until_boundary(tmp_path):
+    cfg,repro,scout=make(tmp_path);cfg['agenda']={'default_budgets':{'max_sessions':None}}
+    cfg['service']['scout_ahead_queue']=True
+    active={'scout':{'investigation':scout['id']}}
+    select_candidate(tmp_path,cfg,active)
+    agenda=Investigations(tmp_path/'investigations.sqlite')
+    assert agenda.get(scout['id'])['budgets']['max_sessions'] is not None
+    assert agenda.get(repro['id'])['budgets']['max_sessions'] is None
+    assert agenda.get(repro['id'])['consumed']==repro['consumed']
+    agenda.close()
