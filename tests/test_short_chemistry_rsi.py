@@ -126,3 +126,8 @@ def test_full_own_final_receipts_inherited_without_old_campaign(tmp_path):
     manifest=pilot.read(run/'private/experimental-memory.json')
     assert manifest['source_runs']==[str(parent)]
     assert any(x.get('kind')=='full trusted own final receipt' for x in manifest['manifest'])
+
+
+def test_real_integration_test_also_establishes_productive_development():
+    assert pilot.productive_development([{'type':'AssistantMessage','data':{'content':[{'name':'mcp__acceptance__integration_test'}]}}])
+    assert not pilot.productive_development([{'type':'AssistantMessage','data':{'content':[{'name':'mcp__acceptance__validate_candidate'}]}}])

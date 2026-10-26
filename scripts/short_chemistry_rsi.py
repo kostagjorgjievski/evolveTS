@@ -121,7 +121,7 @@ def productive_development(rows):
         data=row.get('data',{})
         if row.get('type')!='AssistantMessage' or data.get('error'):continue
         for block in data.get('content',[]):
-            if isinstance(block,dict) and block.get('name')=='mcp__acceptance__diagnose_candidate':
+            if isinstance(block,dict) and block.get('name') in ('mcp__acceptance__diagnose_candidate','mcp__acceptance__integration_test'):
                 return True
     return False
 
