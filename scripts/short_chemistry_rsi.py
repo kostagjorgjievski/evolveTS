@@ -21,7 +21,8 @@ sys.path[:0] = [str(REVIEW), str(HOST/'scripts'), str(HOST/'scripts/literature_a
                str(HOST/'scripts/chemistry_campaign')]
 NAMES = ['kimi_thc','glm_thc','kimi_grouped','glm_grouped']
 SPECS = {'kimi': ('kimi_proxy','k3.1-pro','medium','kimi-proxy.env'),
-         'glm': ('glm','glm-5.3','max','glm.env')}
+         'glm': ('glm','glm-5.3','max','glm.env'),
+         'opus': ('anthropic_oauth','claude-opus-5-5','medium','claude-research.env')}
 
 
 def read(p): return json.loads(Path(p).read_text())
@@ -114,6 +115,8 @@ def worker(run):
     experimental_memory.attach=experimental_memory._attach_own_memory
     meta=read(run/'pilot.json');provider=meta['provider']
     save(run/'pilot.json',{**meta,'status':'waiting_for_provider_slot','pid':os.getpid()})
+    if provider=='anthropic_oauth':
+        return opus_worker(run,meta)
     cfg=pilot.runner.environment(HOST/'.credentials'/meta['credential_file'])
     for k in ('ANTHROPIC_MODEL','ANTHROPIC_SMALL_FAST_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL',
               'ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL'):cfg[k]=meta['worker_model']
@@ -139,6 +142,27 @@ def worker(run):
         meta.update(session_seconds_used=meta.get('session_seconds_used',0)+time.monotonic()-started,
                     worker_error=error,status='grading')
         save(run/'pilot.json',meta)
+    finish_worker(run,meta,parent,artifact,branch,error)
+
+def opus_worker(run,meta):
+    import dfthcsos_pilot as pilot
+    from scripts.short_chemistry_opus import develop
+    token=pilot.runner.environment(HOST/'.credentials'/meta['credential_file'])['CLAUDE_CODE_OAUTH_TOKEN']
+    branch,attempt,_=prepare(run);artifact=attempt/'artifact'
+    parent=run/'private/verified-parent-artifact'
+    if not parent.exists():shutil.copytree(artifact,parent)
+    started=time.monotonic();meta.update(status='running',pid=os.getpid(),started_utc=utc())
+    save(run/'pilot.json',meta);error=None
+    try:asyncio.run(develop(run,meta,token,prepare,REVIEW/'scripts/short_chemistry_tools.py'))
+    except BaseException as exc:error=(type(exc).__name__+': '+str(exc)).replace(token,'[REDACTED]')
+    meta.update(session_seconds_used=meta.get('session_seconds_used',0)+time.monotonic()-started,
+                worker_error=error,status='grading')
+    save(run/'pilot.json',meta)
+    finish_worker(run,meta,parent,artifact,branch,error)
+
+
+def finish_worker(run,meta,parent,artifact,branch,error):
+    from frozen_chemistry_grade import evaluate as frozen_evaluate
     # Missing model/tool startup is infrastructure, never a baseline-scored node.
     events=run/'private/sdk-events.jsonl'
     rows=[json.loads(s) for s in events.read_text().splitlines()] if events.exists() else []
@@ -190,7 +214,7 @@ def launch(run,name):
 
 def controller(campaign,args):
     import rsi_controller as original
-    original.NAMES=NAMES
+    original.NAMES=list(read(campaign/'campaign.json')['branches'])
     original.chem.worker_path=location
     original.chem.new_attempt=initialize_attempt
     original.chem.launch=launch
@@ -222,16 +246,17 @@ def extend_completed_grid(campaign, attempts=11):
 
 def supervise(campaign):
     cfg=read(campaign/'campaign.json');w=campaign/'workspace'
-    attempts=int(cfg['attempts_per_branch']);expected=4*attempts
+    attempts=int(cfg['attempts_per_branch']);width=len(cfg['branches']);expected=width*attempts
+    if width not in (4,5):raise ValueError('Unconfigured branch count')
     if attempts not in (3,11):raise ValueError('Unconfigured attempt count')
     env={**os.environ,'DQI_INDEPENDENT_BRANCHES':'1','CLAUDE_EXEC_TIMEOUT_SEC':'1200',
          'DRSI_PRESERVE_DRAFTS':'1','DRSI_HISTORY_SEED_MODE':'copy',
          'DRSI_EVAL_PYTHON':str(HOST/'.dfthcsos-venv/bin/python')}
     entry=[str(HOST/'.venv/bin/python'),'-u',str(Path(__file__).resolve()),'controller',str(campaign)]
-    save(campaign/'status.json',{'status':'exploring','pid':os.getpid(),'branches':4,
+    save(campaign/'status.json',{'status':'exploring','pid':os.getpid(),'branches':width,
          'attempts_per_branch':attempts,'budget':expected,'development_seconds_per_attempt':1200})
     command=entry+['explore','run','-w',str(w),'-a','claude','--policy-source','baseline','--cycle','0',
-      '--branches','4','--refine',str(attempts-1),'--max-workers','4','--eval-program','artifact/program.py',
+      '--branches',str(width),'--refine',str(attempts-1),'--max-workers',str(width),'--eval-program','artifact/program.py',
       '--eval-timeout','172800','--no-explore-shell','--direction-mode','off',
       '--problem',str(HOST/'tasks/dfthcsos/dfthcsos.txt'),
       '--evaluator',str(HOST/'tasks/dfthcsos/evaluator.py'),

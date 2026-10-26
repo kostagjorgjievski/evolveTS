@@ -59,3 +59,19 @@ def test_authorized_extension_preserves_twelve_and_adds_exactly_thirty_two(tmp_p
     assert all(n['status']=='pending' and not n['raw']['evaluated'] for n in actual[12:])
     assert all(sum(n['branch']==b for n in actual)==11 for b in range(4))
     assert pilot.read(campaign/'campaign.json')['development_seconds_per_attempt']==1200
+
+
+def test_opus_branch_uses_native_oauth_medium_and_verified_seed(tmp_path,monkeypatch):
+    import dfthcsos_opus_prepared as prepared
+    def initialize(run):
+        (run/'worker/explore_b0/attempt_00/artifact').mkdir(parents=True)
+        (run/'private').mkdir();return {}
+    monkeypatch.setattr(prepared,'initialize',initialize)
+    seed=tmp_path/'seed';(seed/'source-bundle').mkdir(parents=True)
+    (seed/'source-bundle/program.py').write_text('verified seed')
+    pilot.save(seed/'MANIFEST.json',{'development':{'score':4.149479453986217},'confirmation':{'score':4.149479453986217}})
+    campaign=tmp_path/'campaign';pilot.save(campaign/'campaign.json',{'branches':{'opus_best':{'seed':str(seed)}}})
+    run=pilot.initialize_attempt(campaign,'opus_best',1);meta=pilot.read(run/'pilot.json')
+    assert (meta['provider'],meta['worker_model'],meta['effort'])==('anthropic_oauth','claude-opus-5-5','medium')
+    assert meta['max_session_seconds']==1200 and meta['experimental_memory']
+    assert pilot.read(run/'worker/explore_b0/parent-result.json')['combined_score']==4.149479453986217
