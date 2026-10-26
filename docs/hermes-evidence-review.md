@@ -1,0 +1,9 @@
+# Research evidence and independent review
+
+Hermes scout packets must link claims to exact quotations from their own fetched sources. The host rechecks cached file hashes, matches whitespace-normalized text, and verifies repository members against the fetched manifest. Notebook JSON strings are decoded; PDF quotations require local pdftotext. Empty responses and obvious challenge or JavaScript shells cannot support a packet. A successful HTTP fetch remains a retrieval receipt, not evidence of useful content. Public Kaggle access remains allowed.
+
+The independently assigned reproducer must record an accepted_for_test or corrected review of the exact current packet before implementation writes, full development validation, confirmation, or publication. Changed packet content or changed source bytes invalidate approval. Missing role metadata fails closed. Reading sources, Markdown notes, and diagnostic-prefixed Python files for cheap diagnostics remain available for assessment. These diagnostics cannot certify a seed.
+
+A quotation match proves that the quotation occurs in the fetched source. It does not prove the interpretation, dependency completeness, novelty, or scientific correctness. Those require the reproducer's recorded review and, for certification, unchanged official development and independent confirmation of the identical frozen submission. Duplicate heuristics remain advisory. code_sections is a locator/notes field; evidence_spans holds the checked quotations.
+
+Live research jobs opt into require_evidence_review at the next idle session boundary. Existing active workers are reattached, preserving drafts, receipts, and consumed budgets. Legacy packets need evidence spans and a fresh review; existing sealed exports remain unchanged. No candidate algorithm, task verifier, scoring rule, or campaign state is changed by this policy.

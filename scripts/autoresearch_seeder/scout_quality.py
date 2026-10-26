@@ -76,7 +76,7 @@ def normalize(text):
 
 def packet(store, args, task, known=()):
     """Validate citations and structure; the scientific content stays unverified."""
-    allowed=set(TEXT_FIELDS)|{'hypothesis_id','dependency_urls','resource_estimates'}
+    allowed=set(TEXT_FIELDS)|{'hypothesis_id','dependency_urls','resource_estimates','evidence_spans'}
     if set(args)-allowed:raise ValueError('Unknown packet fields')
     for field in TEXT_FIELDS:
         if not isinstance(args.get(field),str) or not args[field].strip():
@@ -106,6 +106,8 @@ def packet(store, args, task, known=()):
         error=PacketCitationError(hypothesis['id'],missing,alternatives)
         store.event('scout_packet_issue',error.scout_issue)
         raise error
+    from .source_evidence import verify_spans
+    verified_spans=verify_spans(store,args.get('evidence_spans'),set(urls))
     estimates=[]
     for entry in args.get('resource_estimates',[]):
         if task!='dqi':raise ValueError('Resource formula available only for DQI')
@@ -128,13 +130,14 @@ def packet(store, args, task, known=()):
             'shared_urls':shared,'shared_content_hashes':shared_hashes})
     content={k:args[k] for k in TEXT_FIELDS}
     roles=store.list_events('research_role')
-    content.update(recorded_role=roles[-1]['role'] if roles else 'unspecified',version=VERSION,hypothesis_id=hypothesis['id'],citations=citations,
+    content.update(evidence_version=1,verified_spans=verified_spans,recorded_role=roles[-1]['role'] if roles else 'unspecified',version=VERSION,hypothesis_id=hypothesis['id'],citations=citations,
                    unresolved_dependencies=unresolved,resource_estimates=sorted(estimates,key=lambda x:x['estimated_cost']),
                    duplicate_candidates=matches,science_status='requires independent reproduction',
                    handoff_status='needs_dependency_recovery' if unresolved else 'ready_for_review',
                    certification=False)
     content['fingerprint']=digest({'mechanism':normalize(args['mechanism']),
-        'sources':sorted(s['content_sha256'] for s in citations)})
+        'sources':sorted(s['content_sha256'] for s in citations),
+        'evidence':verified_spans,'text':content,'dependencies':dependencies})
     previous=store.list_events('scout_packet')
     if any(e['packet']['fingerprint']==content['fingerprint'] for e in previous):
         content['duplicate_packet']=True
@@ -224,7 +227,7 @@ def update_report(root):
 
 def review(store, args):
     roles=store.list_events('research_role')
-    if roles and roles[-1]['role']!='reproducer':raise ValueError('Independent reproducer must review, not the scout')
+    if not roles or roles[-1]['role']!='reproducer':raise ValueError('Independent reproducer must review, not the scout')
     required={'fingerprint','outcome','source_urls','mistakes','first_test','next_action'}
     if set(args)!=required:raise ValueError('Complete review fields required')
     if args['outcome'] not in ('accepted_for_test','corrected','rejected'):
@@ -235,6 +238,11 @@ def review(store, args):
         raise ValueError('Review must cite fetched original sources')
     if not args['first_test'] or not args['next_action']:raise ValueError('Test and next action required')
     if args['outcome']=='corrected' and not args['mistakes']:raise ValueError('Describe corrections')
+    chosen=next(p for p in reversed(packets) if p['fingerprint']==args['fingerprint'])
+    if not chosen.get('verified_spans') or chosen.get('handoff_status')!='ready_for_review':raise ValueError('Review needs matched evidence and resolved dependencies')
+    if not set(args['source_urls']) & {s['source_url'] for s in chosen['verified_spans']}:raise ValueError('Review must cite packet evidence sources')
+    from .source_evidence import verify_spans
+    verify_spans(store,[{k:v for k,v in s.items() if k in ('source_url','quote','claim','relative_path')} for s in chosen['verified_spans']],set(args['source_urls']))
     store.event('scout_review',{**args,'label':'independent model review; not scientific certification'})
     return {'recorded':True,'officially_validated':False}
 

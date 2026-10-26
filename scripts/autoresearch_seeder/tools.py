@@ -105,16 +105,18 @@ TOOL_SCHEMAS['record_scout_packet'] = {
     'type':'object','properties':{
         **{k:{'type':'string'} for k in ('hypothesis_id','mechanism','code_sections',
            'compatibility','uncertainty','first_test','rejection_conditions','next_action')},
+        'evidence_spans':{'type':'array','minItems':1,'maxItems':32,'items':{'type':'object','properties':{'source_url':{'type':'string'},'quote':{'type':'string'},'claim':{'type':'string'},'relative_path':{'type':'string'}},'required':['source_url','quote','claim'],'additionalProperties':False}},
         'dependency_urls':{'type':'array','items':{'type':'string'}},
         'resource_estimates':{'type':'array','items':{'type':'object','properties':{
             'source_url':{'type':'string'},'Q':{'type':'number'},'T':{'type':'number'},'R':{'type':'number'}},
             'required':['source_url','Q','T','R'],'additionalProperties':False}}},
     'required':['hypothesis_id','mechanism','code_sections','compatibility','uncertainty',
-                'first_test','rejection_conditions','next_action'], 'additionalProperties':False}
+                'first_test','rejection_conditions','next_action','evidence_spans'], 'additionalProperties':False}
 TOOL_DESCRIPTIONS['record_scout_packet'] = (
     'Save a source-hashed reproduction handoff: cite an existing hypothesis, original code sections, '
     'dependencies, compatibility, uncertainty, cheapest falsification test and rejection rule. '
     'Optional DQI R,Q,T inputs are source claims; the host computes R*Q^2*T, never an official score. '
+    'Required evidence_spans quote exact fetched source text and name the supported claim; repository spans name relative_path. '
     'Duplicate matches are advisory, not rejection. Missing dependencies remain unresolved.')
 
 TOOL_SCHEMAS['record_scout_review'] = {'type':'object','properties':{
@@ -137,8 +139,8 @@ class AccessDenied(ValueError):
 class SourceFetcher:
     """Public-HTTPS-only fetch with the configured host restrictions.
 
-    The saved Kaggle restriction is enforced here for every fetch tool; no
-    alternate path (proxy, raw HTTP, other agent) exists in this dispatcher.
+    Configured network boundaries apply consistently. Public Kaggle retrieval
+    stays available unless the operator explicitly configured a host block.
     """
 
     def __init__(self, cache_dir, blocked_hosts, allow_network=True, get=None):
@@ -375,13 +377,23 @@ class ToolDispatcher:
             if len(files)>=500:break
         return {'files':files,'limit':500}
 
+    def _implementation_guard(self,path=None):
+        if not self.config.get('research',{}).get('require_evidence_review'):return
+        if path is not None:
+            p=Path(path)
+            if p.suffix=='.md' or (p.name.startswith('diagnostic') and p.suffix=='.py'):return
+        from .source_evidence import require_review
+        require_review(self.store)
+
     def _tool_write_candidate_file(self,args):
+        self._implementation_guard(args['path'])
         p=self._research_path(args['path'],True);text=args['content']
         if len(text.encode())>4*2**20:raise ValueError('Text write exceeds4MiB')
         p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text);return {'path':str(p.relative_to(self.job_dir)),'sha256':file_digest(p)}
 
     def _tool_copy_research_file(self,args):
         import shutil
+        self._implementation_guard(args['destination'])
         source=self._research_path(args['source']);dest=self._research_path(args['destination'],True)
         if not source.is_file() or source.stat().st_nlink!=1 or source.stat().st_size>32*2**20:raise ValueError('Regular source <=32MiB required')
         dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,dest);return {'path':str(dest.relative_to(self.job_dir)),'sha256':file_digest(dest)}
@@ -419,6 +431,10 @@ class ToolDispatcher:
                         bytes=fetched.get('bytes', 0),
                         retrieved_utc=fetched.get('retrieved_utc', utc()))
         record=source.record()
+        path=Path(record['local_path'])
+        if path.is_file() and path.stat().st_size<=FETCH_LIMIT:
+            from .source_evidence import assess
+            record['content_assessment']=assess(path.read_bytes())
         for key in ('request_method','request_json'):
             if key in fetched:record[key]=fetched[key]
         outcome = self.store.record_source(record)
@@ -435,7 +451,8 @@ class ToolDispatcher:
                                      attribution=args.get('attribution', ''),**extra)
         outcome = self._record_fetched(fetched, 'paper-or-code')
         return {**fetched, 'local_path':str(Path(fetched['local_path']).relative_to(self.job_dir)), 'new_revision': outcome['new_revision'],
-                'revisions_recorded': outcome['revisions']}
+                'revisions_recorded': outcome['revisions'],
+                'content_assessment':outcome['source'].get('content_assessment',{'status':'reviewable','reason':'repository source tree'})}
 
     def _tool_fetch_repository(self, args):
         allowed = {'url', 'ref', 'relevance', 'license', 'attribution'}
@@ -445,12 +462,14 @@ class ToolDispatcher:
                                           relevance=args.get('relevance', ''),
                                           license_info=args.get('license', ''),
                                           attribution=args.get('attribution', ''))
+        fetched['content_sha256']=file_digest(Path(fetched['complete_index']))
         outcome = self._record_fetched(fetched, 'code')
         return {'repository': fetched['repository'], 'commit': fetched['commit'],
                 'directory': str(Path(fetched['directory']).relative_to(self.job_dir)), 'file_count': fetched['file_count'],
                 'complete_index': fetched.get('complete_index'),
                 'new_revision': outcome['new_revision'],
-                'revisions_recorded': outcome['revisions']}
+                'revisions_recorded': outcome['revisions'],
+                'content_assessment':outcome['source'].get('content_assessment',{'status':'reviewable','reason':'repository source tree'})}
 
     def _tool_report_access_needed(self, args):
         if set(args) != {'url', 'reason'}:
@@ -567,6 +586,7 @@ class ToolDispatcher:
                                     timeout_note='diagnostic <=60s/<=2GiB quick slot')
 
     def _tool_run_development_validation(self, args):
+        self._implementation_guard()
         if args:
             raise ValueError('No arguments allowed')
         if self.config.get('validation', {}).get('deferred_development'):
@@ -583,6 +603,7 @@ class ToolDispatcher:
 
     # -- trusted experiment execution ----------------------------------------------
     def _run_experiment(self, kind, params, timeout_note=''):
+        if kind!='diagnostic':self._implementation_guard()
         frozen = bundle_hash(self.artifact)
         params = dict(params)
         params['protocol_sha256'] = self.adapter.protocol_sha256

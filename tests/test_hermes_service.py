@@ -13,6 +13,31 @@ from scripts.autoresearch_seeder.service import validate_service, wake
 from scripts.autoresearch_seeder.testing import build_job, E2E_SCRIPT, FakeSearch, fake_fetcher
 
 
+def reviewed_fixture_transport(scaffold,job):
+    """Scripted reproducer performs real evidence/review gates before fixture implementation."""
+    class Reviewed:
+        def metadata(self):return scaffold.shared_transport.metadata()
+        def run(self,*args,**kwargs):
+            from scripts.autoresearch_seeder.store import ResearchStore
+            from scripts.autoresearch_seeder import scout_quality as quality
+            store=ResearchStore(job/'private/research.sqlite')
+            try:
+                roles=store.list_events('research_role');hypotheses=store.list_hypotheses()
+                if roles and roles[-1]['role']=='reproducer' and hypotheses and not store.list_events('scout_review'):
+                    h=hypotheses[0];url=h['source_urls'][0];source=store.get_source(url)
+                    packet=quality.packet(store,{'hypothesis_id':h['id'],'mechanism':h['mechanism'],
+                        'code_sections':'Original demo specification','compatibility':'TRICK accepted by fixture verifier',
+                        'uncertainty':'Must pass actual fixture checks','first_test':'run diagnostic',
+                        'rejection_conditions':'official fixture fails','next_action':'implement and validate',
+                        'evidence_spans':[{'source_url':url,'quote':Path(source['local_path']).read_text(),
+                                           'claim':'TRICK reduces demo task cost'}]},'seed_demo')
+                    quality.review(store,{'fingerprint':packet['fingerprint'],'outcome':'accepted_for_test',
+                        'source_urls':[url],'mistakes':[],'first_test':'run diagnostic','next_action':'implement TRICK'})
+            finally:store.close()
+            return scaffold.shared_transport.run(*args,**kwargs)
+    return Reviewed()
+
+
 def config():
     return {'enabled': True, 'task': 'seed_demo', 'provider': {'backend': 'hermes'},
             'reproducer': {'backend': 'hermes'}, 'budgets': {'session_seconds': 30,
@@ -81,7 +106,8 @@ def test_materialized_agenda_uses_real_controller_and_idempotent_verified_public
              'test_search_service':FakeSearch()}
     from scripts.autoresearch_seeder.research_runtime import _create_job
     job=_create_job(root,item,runtime)
-    runtime['test_fetcher']=fake_fetcher(job,scaffold.config)
+    runtime['test_fetcher']=fake_fetcher(job,scaffold.config,bodies={'https://example.org/paper':b'TRICK lines halve BASE cost in this exact demo task.'})
+    runtime['test_transport_factory']=lambda _:reviewed_fixture_transport(scaffold,job)
     result=run_materialized_investigation(agenda,item,knowledge,runtime)
     assert result['status']=='active'
     assert result['checkpoint']['role']=='scout'

@@ -46,7 +46,7 @@ def role_of(root, record, task, scout_ahead=False):
         store=ResearchStore(job/'private/research.sqlite')
         try:
             packets=store.list_events('scout_packet')
-            return 'reproducer' if packets and packets[-1]['packet']['handoff_status']=='ready_for_review' else 'scout'
+            return 'reproducer' if packets and packets[-1]['packet']['handoff_status']=='ready_for_review' and packets[-1]['packet'].get('verified_spans') else 'scout'
         finally:store.close()
     if record['consumed']['sessions'] or record['checkpoint'].get('start_role') == 'reproducer':
         return 'reproducer'

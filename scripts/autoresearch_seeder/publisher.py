@@ -37,6 +37,10 @@ def evaluate_gates(controller) -> dict:
     adapter = controller.adapter
     config = controller.config
     reasons = []
+    if controller.config.get('research',{}).get('require_evidence_review'):
+        from .source_evidence import require_review
+        try:require_review(controller.store)
+        except ValueError as exc:reasons.append('Evidence review required: '+str(exc))
 
     # 1. Task and protocol identity unchanged.
     identity = adapter.identity()

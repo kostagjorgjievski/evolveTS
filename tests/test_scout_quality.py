@@ -1,4 +1,5 @@
 import json
+import hashlib
 from types import SimpleNamespace
 import pytest
 from scripts.autoresearch_seeder import scout_quality as q
@@ -9,10 +10,11 @@ from scripts.autoresearch_seeder.tools import ToolDispatcher
 def setup(tmp_path):
     job=tmp_path/'jobs/autoresearch-seeder/dqi/inv-one'
     store=ResearchStore(job/'private/research.sqlite')
-    store.record_source({'url':'https://example.org/original','status':'accessed','content_sha256':'a'*64,'license':'unknown'})
+    source=job/'sources/original.txt';source.parent.mkdir();source.write_text('The original decoder uses a continued fraction to decode the syndrome.')
+    store.record_source({'url':'https://example.org/original','status':'accessed','content_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'local_path':str(source),'license':'unknown'})
     store.record_hypothesis({'id':'h1','mechanism':'J fraction','source_urls':['https://example.org/original']})
     args={k:'specific '+k for k in q.TEXT_FIELDS}
-    args.update(hypothesis_id='h1',mechanism='J fraction',dependency_urls=[],resource_estimates=[
+    args.update(evidence_spans=[{'source_url':'https://example.org/original','quote':'decoder uses a continued fraction to decode the syndrome','claim':'continued fraction decoder'}],hypothesis_id='h1',mechanism='J fraction',dependency_urls=[],resource_estimates=[
         {'source_url':'https://example.org/original','Q':1837,'T':442397,'R':1},
         {'source_url':'https://example.org/original','Q':883,'T':996048,'R':1}])
     return job,store,args
@@ -21,7 +23,7 @@ def setup(tmp_path):
 def test_receipt_pins_ranking_and_noncertification(tmp_path):
     job,s,a=setup(tmp_path);p=q.packet(s,a,'dqi')
     assert p['resource_estimates'][0]['Q']==883 # fewer Toffolis loses when Q is squared
-    assert p['citations'][0]['content_sha256']=='a'*64
+    assert p['citations'][0]['content_sha256']==hashlib.sha256((job/'sources/original.txt').read_bytes()).hexdigest()
     assert p['science_status']=='requires independent reproduction' and p['certification'] is False
     c=q.checkpoint(s,job,'scout');assert c['handoff_complete']
     s.close()
@@ -45,7 +47,8 @@ def test_duplicates_advisory_and_new_revision_distinct(tmp_path):
     job,s,a=setup(tmp_path);known=[{'record_id':'r1','mechanism':'other method','source_urls':['https://example.org/original']}]
     p=q.packet(s,a,'dqi',known);assert p['duplicate_candidates'] and not p['duplicate_packet']
     assert q.packet(s,a,'dqi',known)['duplicate_packet']
-    s.record_source({'url':'https://example.org/original','status':'accessed','content_sha256':'b'*64})
+    source=job/'sources/original.txt';source.write_text(source.read_text()+' New revision.')
+    s.record_source({'url':'https://example.org/original','status':'accessed','content_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'local_path':str(source)})
     assert not q.packet(s,a,'dqi',known)['duplicate_packet'];s.close()
 
 
@@ -84,6 +87,7 @@ def test_independent_review_requires_existing_packet_and_sources(tmp_path):
     job,s,a=setup(tmp_path);p=q.packet(s,a,'dqi')
     review={'fingerprint':p['fingerprint'],'outcome':'corrected','source_urls':['https://example.org/original'],
             'mistakes':['Q was transcribed incorrectly'],'first_test':'recount Q','next_action':'run diagnostic'}
+    s.event('research_role',{'role':'reproducer'})
     assert q.review(s,review)['officially_validated'] is False
     with pytest.raises(ValueError,match='Unknown packet'):q.review(s,{**review,'fingerprint':'fabricated'})
     (job/'job.json').write_text('{}');s.event('scout_policy',{'version':q.VERSION})
@@ -103,10 +107,10 @@ def test_scout_cannot_review_own_packet(tmp_path):
 def test_known_packet_hashes_detect_rehosted_source_without_exposing_paths(tmp_path):
     job,s,a=setup(tmp_path)
     facts=[{'id':'public-record','payload':{'scout_packet':{'mechanism':'Different name',
-        'citations':[{'url':'https://mirror.example/code','content_sha256':'a'*64,'local_path':'/private/other/run'}]}}}]
+        'citations':[{'url':'https://mirror.example/code','content_sha256':hashlib.sha256((job/'sources/original.txt').read_bytes()).hexdigest(),'local_path':'/private/other/run'}]}}}]
     index=q.known_methods(facts);assert '/private/other' not in json.dumps(index)
     p=q.packet(s,a,'dqi',index)
-    assert p['duplicate_candidates'][0]['shared_content_hashes']==['a'*64]
+    assert p['duplicate_candidates'][0]['shared_content_hashes']==[hashlib.sha256((job/'sources/original.txt').read_bytes()).hexdigest()]
     assert p['handoff_status']=='ready_for_review' # duplicate is advisory, never auto rejection
     s.close()
 

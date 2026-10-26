@@ -148,7 +148,7 @@ def test_only_ready_packet_enters_kimi_queue(tmp_path):
     store=ResearchStore(job/'private/research.sqlite')
     store.record_hypothesis({'id':'hyp','mechanism':'unreviewed idea'})
     assert role_of(tmp_path,scout,'dfthcsos',True)=='scout'
-    store.event('scout_packet',{'packet':{'handoff_status':'ready_for_review'}})
+    store.event('scout_packet',{'packet':{'handoff_status':'ready_for_review','verified_spans':[{'quote':'fixture'}]}})
     assert role_of(tmp_path,scout,'dfthcsos',True)=='reproducer'
     store.close()
 

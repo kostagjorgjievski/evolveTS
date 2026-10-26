@@ -77,6 +77,7 @@ def run_session(controller, transport) -> SessionOutcome:
         session_id = session_id or result.session_id
         usage_total += float(result.usage.get('total_cost_usd') or 0) \
             if isinstance(result.usage.get('total_cost_usd'), (int, float)) else 0.0
+        for relative in result.writes:controller.dispatcher._implementation_guard(relative)
         writes_applied += _apply_writes(controller.dispatcher.attempt, result.writes)
         for call in result.tool_calls:
             name = call.get('name')

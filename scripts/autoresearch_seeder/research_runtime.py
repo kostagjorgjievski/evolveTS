@@ -57,7 +57,7 @@ def _create_job(root, record, research):
         target_provider=research.get('reproducer',research['provider'])
         routing_changed=existing.get('provider')!=target_provider
         follow_up_changed = any(existing['validation'].get(k) != v for k,v in follow_up_validation.items())
-        if not existing.get('validation',{}).get('deferred_development') or budget_changed or routing_changed or follow_up_changed or not existing.get('research',{}).get('defer_provider_retries'):
+        if not existing.get('validation',{}).get('deferred_development') or budget_changed or routing_changed or follow_up_changed or not existing.get('research',{}).get('defer_provider_retries') or not existing.get('research',{}).get('require_evidence_review'):
             from .controller import _process_alive
             lease_path=job/'private/lease.json'
             lease=json.loads(lease_path.read_text()) if lease_path.exists() else {}
@@ -68,6 +68,7 @@ def _create_job(root, record, research):
             before=digest(existing)
             existing.setdefault('validation',{})['deferred_development']=True
             existing.setdefault('research',{})['defer_provider_retries']=True
+            existing['research']['require_evidence_review']=True
             existing['validation'].update(follow_up_validation)
             existing['budgets'].update(target_budgets)
             existing['provider']=copy.deepcopy(target_provider)
@@ -87,6 +88,7 @@ def _create_job(root, record, research):
     total = record['budgets']
     base.update(enabled=True, task=task)
     base['provider'] = research.get('reproducer', research['provider'])
+    base.setdefault('research',{})['require_evidence_review']=True
     base['validation']['deferred_development'] = True
     base['validation'].update(follow_up_validation)
     base['budgets'].update(model_session_seconds=total['max_model_seconds'],
@@ -227,7 +229,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                           and record.get('checkpoint', {}).get('start_role') == 'reproducer')
     if research.get('service',{}).get('scout_ahead_queue'):
         packets=controller.store.list_events('scout_packet')
-        ready=bool(packets and packets[-1]['packet']['handoff_status']=='ready_for_review')
+        ready=bool(packets and packets[-1]['packet']['handoff_status']=='ready_for_review' and packets[-1]['packet'].get('verified_spans'))
         role='reproducer' if ready or prepared_follow_up or record.get('checkpoint',{}).get('role')=='reproducer' else 'scout'
     else:
         role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished or prepared_follow_up else 'scout'
@@ -256,7 +258,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                               'Call propose_hypothesis with explicit source_urls (actual fetched URLs), then '
                               'save a precise decision/next action. Finish after a useful shortlist; '
                               'a separate reproducer continues your durable job. No official validation in this role.\n'
-                              'SCOUT V2: Repair pending citation/packet errors in prepared context before doing more broad searching. Read worker/known-public-methods.json before exploring. Shared sources are only duplicate candidates, not proof of the same method. '
+                              'SCOUT V2: record_scout_packet now requires evidence_spans linking each substantive claim to an exact quote and source_url (optional repo relative_path). Quotes are checked against cached source bytes. Empty shells are retrieval failures, not source evidence. Repair pending citation/packet errors in prepared context before doing more broad searching. Read worker/known-public-methods.json before exploring. Shared sources are only duplicate candidates, not proof of the same method. '
                               'Within this checkpoint call record_scout_packet after propose_hypothesis: exact original code sections, fetched dependencies, compatibility, uncertainty, cheapest falsifying test and rejection conditions. '
                               'For DQI compare source-claimed R,Q,T with the tool-computed R*Q^2*T; do not rank by Toffolis alone. For chemistry use the actual task objective, not the DQI formula. '
                               'Distinguish source claims, predictions, diagnostics and official receipts. Never discard on predicted cost alone. '
@@ -264,7 +266,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                               'If no promising direction remains, record a reject decision explaining sources, uncertainty and next action; do not invent a hypothesis to satisfy paperwork.\n')
                     tools = [t for t in tools if t != 'run_development_validation']
                 else:
-                    brief += ('ROLE: REPRODUCER. Call record_scout_review for an existing packet after checking original sources; record corrected/rejected assumptions honestly. Read worker/scout-packet.json and worker/scout-checkpoint.json when present. Treat ready_for_review as structure only, never scientific acceptance. Independently check source claims, dependencies, arithmetic inputs and the cheapest falsification test before implementing. Record packet mistakes in record_decision notes. If rejection_audit_required is true, independently review the rejected direction within this existing budget before accepting rejection. Check the scout interpretation against original sources, correct errors, '
+                    brief += ('ROLE: REPRODUCER. Implementation writes and full validation are host-blocked until this exact evidence-backed packet has an accepted_for_test or corrected review. You may read sources and run cheap diagnostic.py checks first. Legacy packets need resubmission with evidence_spans before review. Call record_scout_review for an existing packet after checking original sources; record corrected/rejected assumptions honestly. Read worker/scout-packet.json and worker/scout-checkpoint.json when present. Treat ready_for_review as structure only, never scientific acceptance. Independently check source claims, dependencies, arithmetic inputs and the cheapest falsification test before implementing. Record packet mistakes in record_decision notes. If rejection_audit_required is true, independently review the rejected direction within this existing budget before accepting rejection. Check the scout interpretation against original sources, correct errors, '
                               'If the scout left no structured hypotheses, first register source-linked hypotheses '
                               'from its own saved research, with explicit source_urls. '
                               'Implement and diagnose the selected method, then request full official validation. '

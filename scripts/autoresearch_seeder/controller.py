@@ -497,6 +497,14 @@ class Controller:
     # -- stage rules -------------------------------------------------------------------
     def _advance(self, stage: str, post_session: bool = False) -> None:
         job = self.job_state()
+        if self.config.get('research',{}).get('require_evidence_review') and (stage in ('compatibility_test','implementing','development_validation','confirmation') or self.store.list_events('development_requested')):
+            from .source_evidence import require_review
+            try:require_review(self.store)
+            except ValueError as exc:
+                self.save_job(stage='compatibility_test')
+                prior=self.store.list_events('review_required')
+                if not prior or prior[-1].get('reason')!=str(exc):self.store.event('review_required',{'reason':str(exc)})
+                return
         experiments = self.store.list_experiments()
         decisions = self.store.list_decisions()
         dev_attempts = [e for e in experiments if e['kind'] == 'development_validation']
@@ -626,6 +634,7 @@ class Controller:
         under the final salt; the generator never runs again, so numerical
         nondeterminism cannot make the two checks see different submissions.
         """
+        self.dispatcher._implementation_guard()
         job = self.job_state()
         candidate_bundle = job.get('checkpoint', {}).get('candidate_bundle')
         frozen = self._current_bundle()
