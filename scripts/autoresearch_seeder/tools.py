@@ -101,6 +101,30 @@ TOOL_DESCRIPTIONS.update({
 })
 
 
+TOOL_SCHEMAS['record_scout_packet'] = {
+    'type':'object','properties':{
+        **{k:{'type':'string'} for k in ('hypothesis_id','mechanism','code_sections',
+           'compatibility','uncertainty','first_test','rejection_conditions','next_action')},
+        'dependency_urls':{'type':'array','items':{'type':'string'}},
+        'resource_estimates':{'type':'array','items':{'type':'object','properties':{
+            'source_url':{'type':'string'},'Q':{'type':'number'},'T':{'type':'number'},'R':{'type':'number'}},
+            'required':['source_url','Q','T','R'],'additionalProperties':False}}},
+    'required':['hypothesis_id','mechanism','code_sections','compatibility','uncertainty',
+                'first_test','rejection_conditions','next_action'], 'additionalProperties':False}
+TOOL_DESCRIPTIONS['record_scout_packet'] = (
+    'Save a source-hashed reproduction handoff: cite an existing hypothesis, original code sections, '
+    'dependencies, compatibility, uncertainty, cheapest falsification test and rejection rule. '
+    'Optional DQI R,Q,T inputs are source claims; the host computes R*Q^2*T, never an official score. '
+    'Duplicate matches are advisory, not rejection. Missing dependencies remain unresolved.')
+
+TOOL_SCHEMAS['record_scout_review'] = {'type':'object','properties':{
+    'fingerprint':{'type':'string'},'outcome':{'type':'string','enum':['accepted_for_test','corrected','rejected']},
+    'source_urls':{'type':'array','items':{'type':'string'}},'mistakes':{'type':'array','items':{'type':'string'}},
+    'first_test':{'type':'string'},'next_action':{'type':'string'}},
+    'required':['fingerprint','outcome','source_urls','mistakes','first_test','next_action'],'additionalProperties':False}
+TOOL_DESCRIPTIONS['record_scout_review']='Reproducer records independent audit of an existing scout packet against original fetched sources, corrections, cheapest test and next action. Never certifies a seed.'
+
+
 class AccessDenied(ValueError):
     """The configured access policy refuses this source."""
 
@@ -306,8 +330,10 @@ class ToolDispatcher:
                     'error': str(infra)}
         except Exception as exc:   # experiment/tool failures stay session-local
             self.store.event('tool', {'tool': name, 'status': 'error',
+                                      'url': arguments.get('url') if isinstance(arguments,dict) else None,
                                       'detail': str(exc)[:2000]})
-            return {'status': 'error', 'tool': name, 'error': str(exc)}
+            return {'status': 'error', 'tool': name, 'error': str(exc),
+                    **({'retrieval_status':'unresolved', 'guidance':'Preserve this exact URL/error. Try the original notebook source, public dataset file list/download, or referenced upstream repository. A failed request does not establish an account requirement; record unresolved dependencies in your scout packet.'} if name in ('fetch_source','fetch_repository') else {})}
 
     def _research_path(self, relative, write=False):
         if Path(relative).is_absolute():raise AccessDenied('Use own-job relative paths')
@@ -449,6 +475,19 @@ class ToolDispatcher:
         return {'recorded': args['url'], 'status': 'blocked',
                 'note': 'Continue research with accessible sources; do not attempt to '
                         'bypass the restriction through any other path.'}
+
+    def _tool_record_scout_review(self,args):
+        from .scout_quality import review
+        return review(self.store,args)
+
+    def _tool_record_scout_packet(self, args):
+        from .scout_quality import packet
+        index=self.job_dir/'worker/known-public-methods.json'
+        known=json.loads(index.read_text()) if index.exists() else []
+        result=packet(self.store,args,self.adapter.task_id,known)
+        from .models import atomic_write
+        atomic_write(self.job_dir/'worker/scout-packet.json',json.dumps(result,indent=2))
+        return result
 
     def _tool_propose_hypothesis(self, args):
         required = {'mechanism', 'expected_opportunity', 'first_test'}

@@ -7,7 +7,7 @@ import json
 import shutil
 from pathlib import Path
 
-from .models import digest
+from .models import digest, utc
 
 
 def _close(controller):
@@ -247,10 +247,16 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                               'Record concrete hypotheses with source URLs, compatibility, risks and cheapest first test. '
                               'Call propose_hypothesis with explicit source_urls (actual fetched URLs), then '
                               'save a precise decision/next action. Finish after a useful shortlist; '
-                              'a separate reproducer continues your durable job. No official validation in this role.\n')
+                              'a separate reproducer continues your durable job. No official validation in this role.\n'
+                              'SCOUT V2: Read worker/known-public-methods.json before exploring. Shared sources are only duplicate candidates, not proof of the same method. '
+                              'Within this checkpoint call record_scout_packet after propose_hypothesis: exact original code sections, fetched dependencies, compatibility, uncertainty, cheapest falsifying test and rejection conditions. '
+                              'For DQI compare source-claimed R,Q,T with the tool-computed R*Q^2*T; do not rank by Toffolis alone. For chemistry use the actual task objective, not the DQI formula. '
+                              'Distinguish source claims, predictions, diagnostics and official receipts. Never discard on predicted cost alone. '
+                              'For failed retrieval preserve exact URL/error and try original source/dependencies; do not infer blanket login requirements. '
+                              'If no promising direction remains, record a reject decision explaining sources, uncertainty and next action; do not invent a hypothesis to satisfy paperwork.\n')
                     tools = [t for t in tools if t != 'run_development_validation']
                 else:
-                    brief += ('ROLE: REPRODUCER. Check the scout interpretation against original sources, correct errors, '
+                    brief += ('ROLE: REPRODUCER. Call record_scout_review for an existing packet after checking original sources; record corrected/rejected assumptions honestly. Read worker/scout-packet.json and worker/scout-checkpoint.json when present. Treat ready_for_review as structure only, never scientific acceptance. Independently check source claims, dependencies, arithmetic inputs and the cheapest falsification test before implementing. Record packet mistakes in record_decision notes. If rejection_audit_required is true, independently review the rejected direction within this existing budget before accepting rejection. Check the scout interpretation against original sources, correct errors, '
                               'If the scout left no structured hypotheses, first register source-linked hypotheses '
                               'from its own saved research, with explicit source_urls. '
                               'Implement and diagnose the selected method, then request full official validation. '
@@ -283,6 +289,11 @@ def run_materialized_investigation(agenda, record, knowledge, research):
     # Cold acceptance receives only its explicitly frozen public sources.
     # Existing library successes must not leak into discovery/reproduction.
     facts = [] if record.get('checkpoint', {}).get('cold_acceptance') else eligible_knowledge(knowledge, record)
+    from .scout_quality import known_methods, checkpoint as scout_checkpoint, VERSION
+    from .models import atomic_write
+    atomic_write(job/'worker/known-public-methods.json',json.dumps(known_methods(facts),indent=2))
+    if role=='scout' and not controller.store.list_events('scout_policy'):
+        controller.store.event('scout_policy',{'version':VERSION,'adopted_utc':utc()})
     context = job / 'worker/research-agenda.json'
     context.write_text(json.dumps({'topic': record['topic'], 'branch': record.get('branch'),
                                    'level': record['level'], 'eligible_knowledge': facts}, indent=2))
@@ -305,15 +316,17 @@ def run_materialized_investigation(agenda, record, knowledge, research):
         state = controller.job_state()
         if state['stage'] == 'retry_wait':
             retry = state.get('retry', {})
-            from .models import utc
             if retry.get('eligible_utc', '') > utc():
                 return record
             controller.save_job(stage=retry.get('resume_stage', 'researching'))
+        controller.store.event('research_role',{'role':role,'version':VERSION})
         state = controller.run(max_sessions=1)
+        quality=scout_checkpoint(controller.store,job,role)
         finding = _finding(controller, record, knowledge, facts, job, role)
         activity = digest({'experiments': controller.store.list_experiments(),
                            'hypotheses': controller.store.list_hypotheses(),
-                           'decisions': controller.store.list_decisions()})
+                           'decisions': controller.store.list_decisions(),
+                           'scout_packet':quality['latest_packet']})
         # Preserve negative and unfinished R&D too. These are research memory,
         # not ready advice, and branch-origin science remains branch-private.
         checkpoint_key=digest({'job':str(job),'activity':activity})
@@ -322,6 +335,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
             knowledge.add('branch_private' if record.get('branch') else 'external',
                 {'research_checkpoint_key':checkpoint_key,'topic':record['topic'],
                  'hypotheses':controller.store.list_hypotheses(),
+                 'scout_packet':quality['latest_packet'],
                  'decisions':controller.store.list_decisions(),
                  'experiments':[{'id':e['id'],'kind':e['kind'],'status':e['status'],
                                  'metrics':e.get('metrics'), 'conclusion':e.get('conclusion')}
@@ -330,6 +344,9 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                 branch=record.get('branch'),level=record['level'])
         after = controller.consumed()
         checkpoint = {'job': str(job), 'job_stage': state['stage'], 'role': role,
+                      'scout_quality_version':VERSION,
+                      'scout_handoff_complete':quality['handoff_complete'],
+                      'rejection_audit_required':quality['rejection_audit_required'],
                       'next_actions': [controller.store.last_decision().get('next_action', 'Continue own research')
                                        if controller.store.last_decision() else 'Continue own research']}
         if finding:
@@ -343,6 +360,9 @@ def run_materialized_investigation(agenda, record, knowledge, research):
             agenda.db.execute('UPDATE investigations SET status=? WHERE id=?', (status, record['id']))
             agenda.db.commit()
             updated = agenda.get(record['id'])
+        from .scout_quality import update_report
+        try:update_report(root)
+        except Exception as exc:controller.store.event('scout_metrics_error',{'error_class':type(exc).__name__})
         return updated
     except BaseException:
         # The caller backs off. Preserve the job and account interrupted elapsed time
