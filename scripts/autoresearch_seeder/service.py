@@ -28,6 +28,9 @@ def validate_service(config):
         if key=='daily_sessions' and value is None:continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError('Finite positive budget required: ' + key)
+    workers=config.get('service',{}).get('reproducer_workers',1)
+    if isinstance(workers,bool) or not isinstance(workers,int) or workers<1:
+        raise ValueError('reproducer_workers must be a positive integer')
     for role in ('provider', 'reproducer'):
         if config.get(role, {}).get('backend') != 'hermes':
             raise ValueError('Service requires the tested Hermes backend for both roles')

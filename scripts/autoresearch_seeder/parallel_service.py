@@ -1,6 +1,6 @@
 """Two process-isolated research lanes with one durable budget owner.
 
-One scout can discover ahead while one reproducer works. Reservations include
+One scout can discover ahead while independently leased reproducers work. Reservations include
 in-flight sessions in daily admission; the parent alone writes the shared ledger.
 Workers retain the existing own-job leases, official grading and provider slots.
 """
@@ -8,6 +8,7 @@ import datetime
 import contextlib
 import fcntl
 import json
+import math
 import os
 import shutil
 import signal
@@ -62,6 +63,22 @@ def role_of(root, record, task, scout_ahead=False):
     return 'scout'
 
 
+def lane_role(lane):
+    return 'reproducer' if lane.startswith('reproducer') else lane
+
+
+def lanes(config):
+    count=config.get('service',{}).get('reproducer_workers',1)
+    return ['reproducer']+['reproducer_'+str(i) for i in range(2,count+1)]+['scout']
+
+
+def queue_key(record):
+    # A public score is an ordering claim, never trusted validation evidence.
+    claim=record.get('checkpoint',{}).get('scheduling',{}).get('claimed_score')
+    if isinstance(claim,bool) or not isinstance(claim,(int,float)) or not math.isfinite(claim):claim=0
+    return (-claim,-record['priority'],record['created_utc'],record['id'])
+
+
 def select_candidate(root, config, active):
     """No work is invented here: broad topics and public follow-ups stay model-led."""
     from .service import enqueue_public_follow_up
@@ -92,19 +109,21 @@ def select_candidate(root, config, active):
         candidates = [r for r in records if r['status'] in ('queued', 'active')
                       and agenda._budget_remaining(r) and r['id'] not in busy_ids
                       and cooldown_ready(r)]
-        for role in ('reproducer', 'scout'):
-            if role not in active:
+        candidates.sort(key=queue_key)
+        for lane in lanes(config):
+            if lane not in active:
                 for record in candidates:
-                    if role_of(root, record, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == role:
-                        return role, record
+                    if role_of(root, record, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == lane_role(lane):
+                        return lane, record
         if 'scout' in active:
             return None
         # Backpressure: at most one completed scout waits for the reproducer.
         if not config.get('service',{}).get('scout_ahead_queue') and any(role_of(root, r, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == 'reproducer' for r in candidates):
             return None
         item = enqueue_public_follow_up(root, config, agenda, records)
-        if item and 'reproducer' not in active:
-            return 'reproducer', item
+        free_reproducer=next((lane for lane in lanes(config) if lane_role(lane)=='reproducer' and lane not in active),None)
+        if item and free_reproducer:
+            return free_reproducer, item
         today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         topics = config.get('topics', [])
         seen = {r['topic'] for r in records if r['created_utc'].startswith(today)}
@@ -147,14 +166,14 @@ class ParallelOwner:
                 if entry['day']==day:entries.append(entry)
             entries.extend(e for e in self.state['active'].values() if e['day']==day)
             for e in entries:
-                lane=lanes[day][e['role']];lane['sessions']+=1
+                lane=lanes[day][lane_role(e['role'])];lane['sessions']+=1
                 lane['model_seconds']+=e.get('actual_model_seconds',e['reserved_seconds'])
             # Pre-parallel history and unknown billed costs stay conservatively charged.
             total=self.state['ledger'].get(day,{})
             for key in ('sessions','model_seconds','usd'):
                 residual=max(0,total.get(key,0)-sum(v[key] for v in lanes[day].values()))
                 lanes[day]['reproducer'][key]+=residual
-        return lanes[day][role]
+        return lanes[day][lane_role(role)]
 
     def save(self):
         # This snapshot is authoritative on restart; ledger is a status mirror.
@@ -227,7 +246,7 @@ class ParallelOwner:
             return self._admit(role, record, launcher)
 
     def _admit(self, role, record, launcher=None):
-        if role not in ('scout', 'reproducer'):
+        if role not in lanes(self.config):
             return False
         day = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         used = self.state['ledger'].setdefault(day, {'sessions': 0, 'model_seconds': 0., 'usd': 0.})
@@ -297,7 +316,7 @@ class ParallelOwner:
         if shutil.disk_usage(self.root).free < self.config['service'].get('min_free_gib', 4)*2**30:
             return 'resource_wait'
         unavailable=dict(self.state['active'])
-        for _ in range(2):
+        for _ in range(len(lanes(self.config))):
             selected = select_candidate(self.root, self.config, unavailable)
             if selected is None:break
             if not self.admit(*selected) and not self.config.get('service',{}).get('scout_ahead_queue'):break
@@ -357,8 +376,10 @@ def serve_parallel_locked(root, config, config_path=None):
         status = {'pid': os.getpid(), 'state': state, 'updated_utc': utc(),
                   'task': config['task'], 'mode': 'parallel_scout_reproducer',
                   'active_sessions': owner.state['active'], 'usage': owner.state['ledger'],
+                  'reproducer_workers':owner.config.get('service',{}).get('reproducer_workers',1),
+                  'queue_order':'claimed_score_desc_then_priority_then_age',
                   'role_usage':owner.state.get('role_ledger',{}),'scout_ahead_queue':owner.config.get('service',{}).get('scout_ahead_queue',False),
-                  'investigations': records,
+                  'investigations': sorted(records,key=queue_key),
                   'requires_attention':[r['id'] for r in records if r['status']=='infrastructure_blocked'],
                   'cost_note': 'In-flight time/session reservations included. USD unknown when provider omits billing.'}
         write(Path(root)/'status.json', status)

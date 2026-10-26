@@ -169,3 +169,48 @@ def test_removing_count_cap_keeps_active_investigation_unchanged_until_boundary(
     assert agenda.get(repro['id'])['budgets']['max_sessions'] is None
     assert agenda.get(repro['id'])['consumed']==repro['consumed']
     agenda.close()
+
+
+def test_multiple_reproducers_have_distinct_jobs_and_one_shared_budget(tmp_path):
+    cfg, first, scout=make(tmp_path)
+    cfg['service']['reproducer_workers']=2
+    cfg['budgets']['daily_sessions']=None
+    agenda=Investigations(tmp_path/'investigations.sqlite')
+    second=agenda.create('Second independent public candidate')
+    agenda.record_session(second['id'],model_seconds=1)
+    second=agenda.get(second['id']);agenda.close()
+    owner=ParallelOwner(tmp_path,cfg)
+    assert owner.admit('reproducer',first,launch)
+    assert not owner.admit('reproducer_2',first,launch)
+    lane,selected=select_candidate(tmp_path,cfg,owner.state['active'])
+    assert lane=='reproducer_2' and selected['id']==second['id']
+    assert owner.admit(lane,selected,launch)
+    assert not owner.admit('reproducer_3',scout,launch)
+    used=next(iter(owner.state['role_ledger'].values()))['reproducer']
+    assert used['sessions']==2 and used['model_seconds']==60
+    assert len(ParallelOwner(tmp_path,cfg).state['active'])==2
+    # Refund each slot independently and only once after a restart.
+    for entry in owner.state['active'].values():
+        write(Path(entry['session_dir'])/'result.json',{'ok':True})
+    owner.reconcile(is_alive=lambda _:False)
+    owner.reconcile(is_alive=lambda _:False)
+    assert not owner.state['active']
+    assert next(iter(owner.state['role_ledger'].values()))['reproducer']['model_seconds']==0
+
+
+def test_claimed_score_orders_each_available_lane_without_preempting_active(tmp_path):
+    cfg,repro,scout=make(tmp_path)
+    cfg['service'].update(reproducer_workers=2,scout_ahead_queue=True)
+    agenda=Investigations(tmp_path/'investigations.sqlite')
+    low=agenda.create('15.05 public portfolio',priority=100)
+    high=agenda.create('15.75 public portfolio',priority=10)
+    for record,score in [(low,15.05),(high,15.75)]:
+        checkpoint={**record['checkpoint'],'start_role':'reproducer','scheduling':{'claimed_score':score}}
+        agenda.db.execute('UPDATE investigations SET checkpoint=? WHERE id=?',(json.dumps(checkpoint),record['id']))
+    agenda.db.commit();agenda.close()
+    active={'reproducer':{'investigation':repro['id']}}
+    lane,record=select_candidate(tmp_path,cfg,active)
+    assert lane=='reproducer_2' and record['id']==high['id']
+    active[lane]={'investigation':record['id']}
+    # Neither running job can be reassigned; the scout gets its own work.
+    assert select_candidate(tmp_path,cfg,active)[0]=='scout'
