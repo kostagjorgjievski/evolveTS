@@ -193,3 +193,12 @@ The full suite passes136tests, including unchanged-parent continuation,
 negative-outcome closure, independent publisher refusal and preservation of
 original normalization. Read-only preflight also verified parent provenance and
 scores on the live follow-up handoffs before deploying this routing change.
+
+The opt-in service setting `continuous_discovery: true` keeps public discovery
+running after the configured daily topics and eligible public follow-ups have
+finished. Each sweep is durably identified by UTC date and ordinal, rotates the
+configured broad topics, and instructs the scout to consult shared public
+knowledge and negative results before choosing a distinct source-backed direction.
+It does not reopen depleted investigations, expose branch-private work, change
+per-investigation limits, or bypass the existing daily time/session/cost and
+resource admission gates. Disable it to retain idle-after-frontier behavior.

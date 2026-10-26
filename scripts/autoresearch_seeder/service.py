@@ -165,6 +165,22 @@ def wake(root, config, ledger, runner=_maybe_research_session):
         candidate = agenda.next_eligible()
         if candidate is None:
             candidate = enqueue_public_follow_up(root, config, agenda, records)
+        if (candidate is None and service.get('continuous_discovery')
+                and config.get('topics')):
+            # Continue the public research frontier after completed work, under
+            # the same daily admission gates. Never renew a depleted job's
+            # budget or turn a branch-private checkpoint into public research.
+            prefix = 'discovery_sweep:' + today + ':'
+            sweep = sum(r['origin'].startswith(prefix) for r in records)
+            topic = config['topics'][sweep % len(config['topics'])]
+            candidate = agenda.create(
+                topic + '\nPublic discovery sweep: consult the shared research knowledge and '
+                'negative results first. Find a distinct, source-backed direction beyond '
+                'already certified byte portfolios. Do not repeat completed reproductions '
+                'or resume a budget-exhausted investigation under a new identity. '
+                'You choose and interpret the sources and proposed mechanism.',
+                origin=prefix + str(sweep),
+                budgets=config.get('agenda', {}).get('default_budgets'))
         if candidate is None:
             return {'state': 'idle', 'reason': 'No eligible investigations; no model calls'}
     finally:

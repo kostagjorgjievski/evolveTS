@@ -50,6 +50,25 @@ def test_session_usage_persists_and_idle_does_not_spin(tmp_path):
     assert json.loads((root/'service-ledger.json').read_text())==ledger
 
 
+def test_continuous_discovery_advances_frontier_without_renewing_daily_budget(tmp_path):
+    root=tmp_path/'research';root.mkdir();cfg=config();ledger={};calls=[]
+    cfg['service']['continuous_discovery']=True
+    def run(runtime):
+        agenda=Investigations(root/'investigations.sqlite');item=agenda.next_eligible()
+        calls.append(item)
+        agenda.record_session(item['id'],model_seconds=20,usd=.1,activity_digest='completed')
+        agenda.shelve(item['id'],'test finished');agenda.close()
+        return {'investigation_session':item['id']}
+    for _ in range(3):
+        assert wake(root,cfg,ledger,runner=run)['state']=='ready'
+    assert calls[1]['origin'].startswith('discovery_sweep:')
+    assert calls[1]['origin']!=calls[2]['origin']
+    assert 'Do not repeat completed reproductions' in calls[1]['topic']
+    assert wake(root,cfg,ledger,runner=run)['state']=='daily_budget_wait'
+    assert len(calls)==3
+    assert next(iter(ledger.values()))['sessions']==3
+
+
 def test_materialized_agenda_uses_real_controller_and_idempotent_verified_publication(tmp_path):
     scaffold=build_job(tmp_path,E2E_SCRIPT)
     task_root=scaffold.adapter.root
