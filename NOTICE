@@ -1,6 +1,7 @@
 EvolveTS supplies task adapters and integration utilities for Dream-RSI.
 Dream-RSI upstream: Google Research, Apache License 2.0; see pinned upstream sources.
-GIFT-Eval: Salesforce AI Research. TSB-AD: The DATUM Lab.
-LibraryTS: NetManAIOps/sktime lab fork. Each upstream project, data collection,
-and pretrained checkpoint retains its own licence. This repository contains
-no third-party datasets, checkpoint weights, or bundled LibraryTS wheel.
+GIFT-Eval: Salesforce AI Research. TSB-AD: The DATUM Lab. RCAEval: Luan Pham et al.,
+MIT License (code and RE1 data). LibraryTS: NetManAIOps/sktime lab fork. Each
+upstream project, data collection, and pretrained checkpoint retains its own
+licence. This repository contains no third-party datasets, checkpoint weights,
+or bundled LibraryTS wheel.

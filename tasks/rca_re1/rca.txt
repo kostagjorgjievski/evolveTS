@@ -1,0 +1,75 @@
+Discover a competitive multivariate time-series root-cause ranking method under
+this fixed development and execution contract. Improve the EVOLVE block in
+init_program.py. Choose the approach yourself: statistical, causal-discovery,
+graph, residual, correlation, or available neural components are permitted.
+There is no required algorithm family.
+
+Interface:
+    rank(data, inject_time, metadata) -> list[str]
+
+`data` is a pandas DataFrame window of one incident: a `time` column of integer
+Unix seconds followed by one float64 column per metric series. Series names are
+`<service>_<metric>` (for example `adservice_cpu`). `inject_time` (int, Unix
+seconds) is the detected incident timestamp. The evaluator has already applied
+the official RCAEval main.py preprocessing: a repeated `time.1` column is
+dropped, every `*_latency-50` column is dropped, +-inf becomes NaN, values are
+forward-filled and then filled with 0, the window keeps the last 600 rows before
+inject_time plus the first 600 rows at/after it, and each `*_latency-90` column
+is renamed `*_latency`. Inputs contain only observed telemetry; no labels,
+root-cause service, fault type, case name, or injection position beyond the
+window boundary are provided.
+
+Return a Python list of metric column names (all columns except `time`), highest
+suspicion first. It must contain EVERY metric column exactly once; duplicates,
+omissions, `time`, non-strings, NaN-producing code, exceptions, timeouts or a
+missing file fail the entire candidate (score 0). The evaluator derives the
+official service-level ranking by taking the first occurrence of each service
+prefix (text before the first underscore, with a trailing `-db` removed), so a
+good ranking must put both the faulty service and its faulty metric early.
+
+`metadata` contains:
+  - seed: fixed integer seed (deterministic runs are expected)
+  - device: 'cuda:0'
+  - system: the system family ('ob', 'ss' or 'tt')
+  - sli: the system's fixed service-level indicator column name
+The SLI is provided for context only; it is not a hint that the SLI metric is the
+root cause. No root-cause identity is encoded in metadata.
+
+The objective is the official RCAEval service-level Avg@5 (mean over cases of
+AC@1..AC@5) across the fixed development cases, higher is better. The official
+Evaluator from pinned RCAEval computes AC@1, AC@3, AC@5 and Avg@5 at both
+service and metric level during search; the search objective is the service
+level. Any failed case fails the entire candidate. The development split is one
+repetition of every (system, root-cause service, fault) stratum; final evaluation
+is the remaining 300 official RE1 cases and, optionally, all 375.
+
+Execution budget per case: 120 seconds including container startup, 1 CPU
+thread, 8 GiB host resident memory, one leased GPU with an 8 GiB PyTorch
+allocator budget (not a hardware memory partition). Fit and ranking both count.
+No network; only the submitted file, the input window and scratch are exposed to
+candidate code. Every case starts a fresh process, so no state persists between
+cases. Available: Python 3.12, NumPy 1.26.4, pandas 2.2.3, SciPy 1.14.1,
+scikit-learn 1.5.2, statsmodels 0.14.4, networkx, PyTorch 2.10.0 with one CUDA
+GPU. Pretrained weights are not preinstalled; do not assume network access or an
+unlisted model cache. GPU evaluations queue using the same resource locks as the
+anomaly and forecasting tasks.
+
+Discovery follows upstream Dream-RSI settings: by default 10 branches x 11
+attempts, up to 10 coding workers per round, 10 rounds, and the original
+controller rewrite/replay/promotion logic. Explicit launch overrides are
+recorded. All controller calls, replays and failed attempts count in experiment
+accounting.
+
+Use only this task's provided feedback and permitted source/tools. Do not read
+or retrieve benchmark labels, published RCAEval case results, per-case
+predictions, solution repositories or evaluation-set outcomes. Do not hard-code
+case recognition, root-cause positions, service-specific lookup tables or
+dataset identities. Do not modify the evaluator, protocol, seed outside EVOLVE
+blocks, upstream source, sandbox, or shared infrastructure.
+
+Final evaluation is separate: a program is selected and frozen by SHA-256 before
+scoring the 300-case official development-held-out set or explicitly all 375 RE1
+cases. Neither final split supplies discovery feedback. A development improvement
+is not a SOTA result. Evaluate pipeline quality and RSI benefit separately,
+comparing fixed exploration at matched total costs, with identical coding model,
+tools, initial code and data access.

@@ -10,6 +10,7 @@ This is a **fresh-start source distribution**. It contains no API keys, experime
 |---|---|---|---|
 | `tsb_ad_u` | Median/MAD | Mean official VUS-PR on all 48 tuning series | Official 350-series list; optional full 822 list |
 | `gift_forecasting_v2` | Seasonal naive, point-mass quantiles | Inverse geometric mean of relative CRPS across 24 configurations, up to 32 series each; MASE diagnostic only | All 97 configurations, all series and original test windows |
+| `rca_re1` | Robust deviation ranker | Official service-level Avg@5 on 75 RE1 cases | Held-out 300 RE1 cases; optional all 375 |
 
 Task metrics, data/source pins, permitted inputs and resource budgets live in each task's `protocol.json` and task description. Final test results never feed discovery. A development score is not a leaderboard result.
 
@@ -55,7 +56,6 @@ Run the same setup command on a CUDA host with Docker. It builds a local standal
 ```bash
 bash scripts/setup_forecasting.sh
 ```
-
 This downloads pinned GIFT-Eval data, fetches pinned source archives for worker dependencies, builds the Docker worker, downloads the seven optional checkpoints and computes **your own** seasonal-naive reference. Check model licences before downloading; some weights have research/non-commercial conditions. Weights are mounted read-only during candidate evaluation; runtime network access is denied.
 
 The unified worker deliberately overrides conflicting dependency ranges for TiRex, Toto and FlowState's dependencies. This reproduces the adaptation's integration strategy, not each package author's exact environment. Run the restricted model probes on your GPU before search:
@@ -65,6 +65,14 @@ bash tasks/gift_forecasting_v2/smoke_models.sh
 ```
 
 Setup is substantial (multiple GB and a Docker build). Forecasting v2 is not configured for Mac/MPS. The release packaging has source/unit checks; a fresh GPU image build is required on the recipient's machine.
+
+### Root cause analysis: Linux / CUDA
+
+```bash
+bash tasks/rca_re1/setup.sh
+```
+
+This downloads the pinned RCAEval RE1 metric corpus (375 cases, Hugging Face revision pinned), verifies every file against the committed per-case checksum manifest, builds the local CUDA worker and records its image ID in your ignored host profile. It also honours `HF_ENDPOINT` and falls back to `https://hf-mirror.com` when `huggingface.co` is unreachable. RE1 is not configured for Mac/MPS.
 
 ## 4. Choose your GPUs
 
@@ -76,6 +84,7 @@ Bootstrap creates `configs/hosts/<hostname>.json`, ignored by Git. Start with GP
 BACKEND=minimax bash scripts/run_fresh.sh tsb_ad_u
 # Or, independently:
 BACKEND=minimax bash scripts/run_fresh.sh gift_forecasting_v2
+BACKEND=minimax bash scripts/run_fresh.sh rca_re1
 ```
 
 Each command creates unique empty workspaces, runs E0, then continues through the upstream Dream-RSI loop. Defaults: **10 total rounds including E0**, **10 coding workers**, E0 **10 branches × 11 attempts**, and three controller rewrites per dreaming phase. These are full searches, not smoke tests.
@@ -104,6 +113,7 @@ For separate stages or resuming an existing workspace, use `tasks/<task>/launch.
 # After task setup, run the appropriate task checks separately:
 .tsb-venv/bin/python -m pytest tasks/tsb_ad_u/test_task.py -q
 .gift-venv/bin/python -m pytest tasks/gift_forecasting_v2/test_task.py -q
+.rca-venv/bin/python -m pytest tasks/rca_re1/test_task.py -q
 ```
 
 Task checks require the downloaded data, upstream checkouts and matching hardware isolation/runtime. They do not launch LLM discovery. Final evaluation additionally requires a frozen program hash and a new output directory; see each task README.

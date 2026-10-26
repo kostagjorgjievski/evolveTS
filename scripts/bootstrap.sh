@@ -15,6 +15,7 @@ pin_repo() {
 pin_repo dream-rsi https://github.com/google-research/dream-rsi.git 8ec35bd2538220517ce1bfca4282db21b8c518db
 pin_repo tsb-ad https://github.com/TheDatumOrg/TSB-AD.git 303dffbfc11612995b17b06633f8c9d0ea0e38e5
 pin_repo gift-eval https://github.com/SalesforceAIResearch/gift-eval.git 3c7be6deffb0046e1c08f9103db8bc84b3cf7ebd
+pin_repo rcaeval https://github.com/phamquiluan/RCAEval.git 2fca61b9730a69c21ef72411844735634dbb010f
 uv python install 3.12
 [ -x .venv/bin/python ] || uv venv --seed --python 3.12 .venv
 uv pip install --python .venv/bin/python -e 'upstream/dream-rsi[claude,dev]' claude-agent-sdk==0.1.50 psutil==7.0.0

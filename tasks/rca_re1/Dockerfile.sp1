@@ -1,0 +1,8 @@
+# Standalone CUDA worker; built locally during setup.
+FROM python:3.12-slim-bookworm
+RUN pip install --no-cache-dir --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    numpy==1.26.4 pandas==2.2.3 scipy==1.14.1 scikit-learn==1.5.2 \
+    statsmodels==0.14.4 networkx==3.4.2
+RUN pip install --no-cache-dir torch==2.10.0 --index-url https://download.pytorch.org/whl/cu126
+COPY worker.py sandbox.py /opt/rca/
+ENTRYPOINT []

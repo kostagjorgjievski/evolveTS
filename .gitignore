@@ -24,3 +24,4 @@ tasks/*/vendor/
 tasks/*/reference_seasonal_naive.json
 tasks/*/requirements-*.lock.txt
 !tasks/gift_forecasting_v2/requirements-v2-worker.lock.txt
+gift-eval-gpu-*.lock
