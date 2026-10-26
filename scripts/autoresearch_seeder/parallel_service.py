@@ -111,11 +111,11 @@ def select_candidate(root, config, active):
                       and cooldown_ready(r)]
         candidates.sort(key=queue_key)
         for lane in lanes(config):
-            if lane not in active:
+            if lane not in active and not (lane == 'scout' and (Path(root)/'SCOUT_PAUSE').exists()):
                 for record in candidates:
                     if role_of(root, record, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == lane_role(lane):
                         return lane, record
-        if 'scout' in active:
+        if 'scout' in active or (Path(root)/'SCOUT_PAUSE').exists():
             return None
         # Backpressure: at most one completed scout waits for the reproducer.
         if not config.get('service',{}).get('scout_ahead_queue') and any(role_of(root, r, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == 'reproducer' for r in candidates):
@@ -246,6 +246,8 @@ class ParallelOwner:
             return self._admit(role, record, launcher)
 
     def _admit(self, role, record, launcher=None):
+        if role == 'scout' and (self.root/'SCOUT_PAUSE').exists():
+            return False
         if role not in lanes(self.config):
             return False
         day = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
