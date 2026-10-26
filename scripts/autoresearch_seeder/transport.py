@@ -20,7 +20,7 @@ ACCESS_ERROR = re.compile(
     r'API Error: 40[123]\b|Failed to authenticate|invalid[ _-]?api[ _-]?key'
     r'|insufficient[ _-]?(quota|balance)|quota[ _-]?exceeded|余额不足', re.IGNORECASE)
 RATE_LIMIT = re.compile(r'API Error: 429|\(429\)|rate[ _-]?limit|\[1302\]|overload'
-                        r'|API Error: 50[0234]', re.IGNORECASE)
+                        r'|(?:API Error:|HTTP)\s*50[0234]', re.IGNORECASE)
 
 
 def classify_provider_error(detail: str):
@@ -29,6 +29,16 @@ def classify_provider_error(detail: str):
     if RATE_LIMIT.search(detail or ''):
         return ProviderRateLimit(detail)
     return None
+
+
+def provider_error_detail(stdout, stderr):
+    """Hermes can emit the provider error only in stream JSON, not stderr."""
+    for line in reversed((stdout or '').splitlines()):
+        try: event=json.loads(line)
+        except (ValueError, TypeError): continue
+        if event.get('type')=='result' and (event.get('error') or event.get('exit_code')):
+            return str(event.get('error') or event.get('text') or '')[-4000:]
+    return (stderr or stdout or '')[-4000:]
 
 
 @dataclass

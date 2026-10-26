@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import ROOT
 from .models import ProviderRateLimit, ToolInfrastructureError
-from .transport import TransportResult, classify_provider_error
+from .transport import TransportResult, classify_provider_error, provider_error_detail
 
 INTERPRETER_PROBE = (
     'import sys, json; import mcp; from mcp.server.stdio import stdio_server; '
@@ -551,7 +551,7 @@ class HermesBackend(Backend):
                 result.usage = {'raw': usage_path.read_text()[:4000]}
         self._absorb_stream(stdout or '', result)
         if exit_code != 0 or result.usage.get('failed'):
-            detail = (stderr or stdout or '')[-4000:]
+            detail = provider_error_detail(stdout, stderr)
             result.error_detail = detail
             result.finished_reason = 'error'
             classified = classify_provider_error(detail)

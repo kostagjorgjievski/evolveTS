@@ -60,8 +60,15 @@ def select_candidate(root, config, active):
     try:
         records = agenda.list()
         busy_ids = {a['investigation'] for a in active.values()}
+        def cooldown_ready(record):
+            checkpoint=record.get('checkpoint',{})
+            if checkpoint.get('job_stage')!='retry_wait':return True
+            state=Path(checkpoint['job'])/'job.json'
+            job=json.loads(state.read_text())
+            return job.get('retry',{}).get('eligible_utc','')<=utc()
         candidates = [r for r in records if r['status'] in ('queued', 'active')
-                      and agenda._budget_remaining(r) and r['id'] not in busy_ids]
+                      and agenda._budget_remaining(r) and r['id'] not in busy_ids
+                      and cooldown_ready(r)]
         for role in ('reproducer', 'scout'):
             if role not in active:
                 for record in candidates:

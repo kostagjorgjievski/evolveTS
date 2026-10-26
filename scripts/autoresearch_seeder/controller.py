@@ -418,7 +418,8 @@ class Controller:
             raise ToolInfrastructureError('No transport configured')
         retries = int(self.config['budgets']['max_provider_retries'])
         wait = float(self.config['budgets']['retry_wait_seconds'])
-        attempt = 0
+        deferred=self.config.get('research',{}).get('defer_provider_retries',False)
+        attempt=self.job_state().get('retry',{}).get('attempt',0) if deferred else 0
         while True:
             transport = self.transport_factory(self.config)
             try:
@@ -460,6 +461,8 @@ class Controller:
                                          time.gmtime(time.time() + wait))})
                 self.store.event('retry_wait', {'attempt': attempt,
                                                 'detail': str(limited)[:1000]})
+                if deferred:
+                    return  # durable cooldown; a future admitted window retries the same job
                 self._sleep_bounded(wait)
                 self.save_job(stage=previous)
             except ProviderRefused as refused:

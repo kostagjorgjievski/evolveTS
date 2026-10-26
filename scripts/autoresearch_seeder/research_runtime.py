@@ -55,7 +55,7 @@ def _create_job(root, record, research):
                           'max_total_cost_usd': record['budgets']['max_usd']}
         budget_changed = any(existing['budgets'].get(k) != v for k, v in target_budgets.items())
         follow_up_changed = any(existing['validation'].get(k) != v for k,v in follow_up_validation.items())
-        if not existing.get('validation',{}).get('deferred_development') or budget_changed or follow_up_changed:
+        if not existing.get('validation',{}).get('deferred_development') or budget_changed or follow_up_changed or not existing.get('research',{}).get('defer_provider_retries'):
             from .controller import _process_alive
             lease_path=job/'private/lease.json'
             lease=json.loads(lease_path.read_text()) if lease_path.exists() else {}
@@ -65,6 +65,7 @@ def _create_job(root, record, research):
             from .store import ResearchStore
             before=digest(existing)
             existing.setdefault('validation',{})['deferred_development']=True
+            existing.setdefault('research',{})['defer_provider_retries']=True
             existing['validation'].update(follow_up_validation)
             existing['budgets'].update(target_budgets)
             existing['budgets']['job_wall_clock_seconds'] = max(
@@ -89,6 +90,7 @@ def _create_job(root, record, research):
                            job_wall_clock_seconds=max(14400, total['max_model_seconds'] * 4),
                            max_total_cost_usd=total['max_usd'])
     base['research'].update(research.get('research',{}))
+    base['research']['defer_provider_retries']=True
     base['research']['search_credential_file'] = research.get('search_credential_file', '')
     config = root / 'job-configs' / (record['id'] + '.json')
     config.parent.mkdir(parents=True, exist_ok=True)
