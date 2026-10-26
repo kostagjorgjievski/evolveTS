@@ -41,3 +41,13 @@ batches with preserved prior evidence. Faster handoffs alone do not establish
 scientific quality; independent reproduction and certified seeds are the outcome.
 Wall times include queue waits; different sources and providers confound causal
 comparisons.
+
+## Parallel gateway isolation
+
+Every headless researcher sets `HERMES_GATEWAY_LOCK_DIR` inside its own
+`HERMES_HOME`. Upstream Hermes otherwise uses one OS-user gateway singleton
+across all homes, which can reject a parallel reproducer before it makes any
+model/tool call. This uses the upstream-supported scope override, not force mode.
+Same-job duplicate owners still contend on the same lock. Separate jobs retain
+separate profiles, histories and cleanup identities. A real pinned-upstream lock
+test verifies two job scopes can coexist while a duplicate owner is refused.

@@ -483,6 +483,15 @@ class HermesBackend(Backend):
         cleanup=subprocess.run([str(python),str(helper),str(self.home)],env=env,capture_output=True,text=True,timeout=15)
         if cleanup.returncode: raise ToolInfrastructureError('Hermes owner cleanup failed; inspect local cleanup log')
 
+    def session_environment(self):
+        # These are independent headless researchers, not user-facing gateway
+        # profiles. Sharing the upstream host singleton joins unrelated jobs or
+        # rejects a legitimate parallel worker before any model call.
+        return {'PATH':os.environ.get('PATH','/usr/bin:/bin'),
+                'HERMES_HOME':str(self.home),
+                'HERMES_GATEWAY_LOCK_DIR':str(self.home/'gateway-locks'),
+                'PYTHONDONTWRITEBYTECODE':'1'}
+
     def run(self, prompt, tools, workspace, budget) -> TransportResult:
         self.provider['session_seconds']=float(budget['session_seconds'])
         self.tool_names=sorted(tools)
@@ -508,9 +517,7 @@ class HermesBackend(Backend):
                    '--ignore-rules', '--toolsets', 'seeder', '--in', str(self.job_dir / 'worker')]
         if model:
             command += ['-m', model]
-        env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
-               'HERMES_HOME': str(self.home),
-               'PYTHONDONTWRITEBYTECODE': '1'}
+        env = self.session_environment()
         result = TransportResult()
         started = time.monotonic()
         timeout = max(1.0, float(budget.get('session_seconds', 3600)))
