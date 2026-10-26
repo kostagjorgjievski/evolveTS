@@ -512,6 +512,15 @@ class Controller:
         if stage == 'queued':
             self.save_job(stage='researching')
             return
+        # A full check is a trusted compatibility check itself. Workers may
+        # request it directly without first issuing a cheap diagnostic or a
+        # research decision; do not silently strand an accepted tool request.
+        if (stage in ('researching', 'compatibility_test')
+                and self.config.get('validation', {}).get('deferred_development')):
+            requests = self.store.list_events('development_requested')
+            if requests and requests[-1].get('input_bundle_sha256') == self._current_bundle():
+                self.save_job(stage='implementing')
+                return self._advance('implementing', post_session=post_session)
         if stage == 'researching':
             if diagnostics:
                 self.save_job(stage='compatibility_test')

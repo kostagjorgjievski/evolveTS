@@ -170,6 +170,32 @@ def test_deferred_validation_runs_after_model_session_and_exact_receipts_publish
     assert len(controller.store.list_experiments('confirmation_validation'))==1
 
 
+@pytest.mark.parametrize('stage', ['researching', 'compatibility_test'])
+def test_direct_full_validation_request_is_not_stranded_in_research(tmp_path, stage):
+    from scripts.autoresearch_seeder.testing import GOOD_PROGRAM, GENERATION_MD
+    controller=build_job(tmp_path, [], overrides={'validation':{'deferred_development':True}})
+    controller.dispatcher.artifact.joinpath('program.py').write_text(GOOD_PROGRAM)
+    controller.dispatcher.artifact.joinpath('GENERATION.md').write_text(GENERATION_MD)
+    controller.save_job(stage=stage)
+    controller.dispatcher._tool_run_development_validation({})
+    controller._post_session()
+    assert len(controller.store.list_experiments('development_validation'))==1
+    assert len(controller.store.list_experiments('confirmation_validation'))==1
+    # Direct grading does not waive publication provenance gates.
+    assert controller.job_state()['stage']=='rejected'
+    assert 'provenance required' in str(controller.job_state()['terminal'])
+
+
+def test_direct_full_validation_request_does_not_grade_changed_bundle(tmp_path):
+    controller=build_job(tmp_path, [], overrides={'validation':{'deferred_development':True}})
+    controller.save_job(stage='researching')
+    controller.dispatcher._tool_run_development_validation({})
+    controller.dispatcher.artifact.joinpath('program.py').write_text('changed after request')
+    controller._post_session()
+    assert not controller.store.list_experiments('development_validation')
+    assert controller.job_state()['stage']=='researching'
+
+
 def test_install_host_preserves_existing_memory_and_is_repeatable(tmp_path):
     from scripts.autoresearch_seeder.install_host import install
     host=tmp_path/'host';module=host/'scripts/literature_acceptance/experimental_memory.py';module.parent.mkdir(parents=True)
