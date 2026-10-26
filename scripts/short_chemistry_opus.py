@@ -9,8 +9,8 @@ def save(run,meta):
 
 async def develop(run,meta,token,prepare_fn,server_script):
     branch,attempt,prompt=prepare_fn(run)
-    from experimental_memory import _attach_own_memory
-    prompt=_attach_own_memory(run,branch,prompt)
+    from experimental_memory import attach as attach_memory
+    prompt=attach_memory(run,branch,prompt)
     # Use the native Anthropic transport, with no alternate-provider routing.
     for key in list(os.environ):
         if key.startswith(('ANTHROPIC_','CLAUDE_')):os.environ.pop(key)

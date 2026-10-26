@@ -6,6 +6,7 @@ submission grading, then upstream policy discovery/replay; no automatic E1.
 import argparse
 import asyncio
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from string import Template
 
 REVIEW = Path(__file__).resolve().parents[1]
 HOST = Path('/Users/kostagj/Documents/ChatGPT/EvolveTS-RSI')
@@ -59,6 +61,71 @@ def initialize_attempt(campaign,name,index):
     return run
 
 
+def upstream_guidance(run,branch,attempt):
+    meta=read(run/'pilot.json')
+    frozen=Path(meta.get('campaign','/absent'))/'prompts/upstream-explore.txt'
+    source=frozen if frozen.exists() else HOST/'upstream/dream-rsi/dream_rsi/prompts/explore.txt'
+    original=source.read_text()
+    history='Before proposing anything, read every `proposal.md` under sibling `attempt_*/` dirs, `$history_dir`, and `$baseline_dir` in full — not a sample, not just recent cycles or the current branch.'
+    replacement=('Before proposing anything, read every own-branch historical `proposal.md` in $history_dir in full, with its matching measured receipts and errors. Read the own parent source, parent-result.json and seed-manifest.json too. Read all available own-branch history, not just a sample or the immediate parent. On the first attempt there is no prior RSI history. Never read another branch or the archived previous campaign.')
+    if original.count(history)!=1:raise RuntimeError('Upstream history instruction changed; review adaptation')
+    text=original.replace(history,replacement)
+    text=text.replace('For each, read its matching `eval/score.json` (and `error.txt` if it failed).', 'For each, read its copied own final receipts under private/candidate-development/result.json or private/fallback-development/result.json and the matching confirmation, plus copied error/tool evidence when present.')
+    files="Write only `$node_dir/proposal.md` (mechanism, evidence from history, why it's not a repeat, expected benefit/risk) and `$node_dir/$eval_program`. Everything else is read-only."
+    allowed=('Write only `attempt_00/proposal.md` (mechanism, evidence from own history, why it is not a repeat, expected benefit/risk) and `attempt_00/artifact/**` (source, helpers, drafts and research-state.md). Everything else is read-only. The task adapter uses a multi-file source bundle.')
+    if text.count(files)!=1:raise RuntimeError('Upstream file contract changed; review adaptation')
+    text=text.replace(files,allowed)
+    text=Template(text).substitute(direction_guidance='',node_dir='attempt_00',
+        history_dir='experimental-history/',baseline_dir='own certified seed',
+        eval_program='artifact/program.py',problem_file='task.txt')
+    save(run/'private/prompt-integration.json',{'version':2,'upstream_source':str(source),
+         'upstream_sha256':hashlib.sha256(original.encode()).hexdigest(),
+         'adaptations':['own-branch-only history','task-adapter multi-file write contract','resolved task paths'],
+         'upstream_exploration_instructions_included':True})
+    return text
+
+
+def audited_own_context(run,branch,prompt):
+    import experimental_memory
+    delivered=experimental_memory._attach_own_memory(run,branch,prompt)
+    # These drivers store final receipts under candidate-/fallback-*, unlike the
+    # historical worker's final-development naming. Include actual own receipts.
+    memory_path=run/'private/experimental-memory.json'
+    if memory_path.exists():
+        memory=read(memory_path);known={x['path'] for x in memory['manifest']}
+        for parent in experimental_memory.parents(run,read(run/'pilot.json')):
+            for label in ('candidate-development','candidate-confirmation','fallback-development','fallback-confirmation'):
+                source=parent/'private'/label/'result.json'
+                if not source.exists():continue
+                if source.is_symlink() or not source.is_file():raise ValueError('Regular own receipt required')
+                relative=Path(parent.name)/'private'/label/'result.json'
+                if str(relative) in known:continue
+                memory['bytes']+=source.stat().st_size
+                if memory['bytes']>64*2**20:raise RuntimeError('Own memory exceeds64MiB')
+                dest=branch/'experimental-history'/relative;dest.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copyfile(source,dest)
+                memory['manifest'].append({'source_run':str(parent),'path':str(relative),
+                    'sha256':hashlib.sha256(dest.read_bytes()).hexdigest(),'kind':'full trusted own final receipt'})
+        save(memory_path,memory)
+    (run/'private/delivered-prompt.txt').write_text(delivered)
+    audit=read(run/'private/prompt-integration.json')
+    audit.update(delivered_sha256=hashlib.sha256(delivered.encode()).hexdigest(),
+                 own_memory_manifest=str(run/'private/experimental-memory.json'))
+    save(run/'private/prompt-integration.json',audit)
+    return delivered
+
+
+def productive_development(rows):
+    # Provider error AssistantMessages are not evidence of model/tool startup.
+    for row in rows:
+        data=row.get('data',{})
+        if row.get('type')!='AssistantMessage' or data.get('error'):continue
+        for block in data.get('content',[]):
+            if isinstance(block,dict) and block.get('name')=='mcp__acceptance__diagnose_candidate':
+                return True
+    return False
+
+
 def prepare(run):
     meta=read(run/'pilot.json');branch=run/'worker/explore_b0';attempt=branch/'attempt_00'
     prompt=f'''You are an independent chemistry RSI optimization worker in a FRESH conversation.
@@ -101,6 +168,8 @@ then focus on a concrete improvement of your parent. No compulsory literature
 review: use inherited evidence and search only as needed. Finish with a working
 source bundle, exact generation instructions, honest proposal and saved memory.
 '''
+    prompt=upstream_guidance(run,branch,attempt)+'\n\n## Prepared chemistry task and execution contract\n'+prompt
+    prompt+='\nDo not stop solely because one cheap test fails. While development allowance remains and a credible next test exists, continue to that test or a substantive implementation. When own history shows a plateau, prioritize a structurally different mechanism as the upstream instructions require. Preserve a verified fallback, but do not confuse preserving it with completing exploration. If ending early, explain the specific blocker or why no credible next experiment fits. Never claim global optimality from a limited local sweep.\n'
     return branch,attempt,prompt
 
 
@@ -112,7 +181,7 @@ def worker(run):
     import experimental_memory
     # E0 receives a frozen seed package and own history; live Hermes advice
     # stays outside the controlled crossed-seed experiment.
-    experimental_memory.attach=experimental_memory._attach_own_memory
+    experimental_memory.attach=audited_own_context
     meta=read(run/'pilot.json');provider=meta['provider']
     save(run/'pilot.json',{**meta,'status':'waiting_for_provider_slot','pid':os.getpid()})
     if provider=='anthropic_oauth':
@@ -167,7 +236,7 @@ def finish_worker(run,meta,parent,artifact,branch,error):
     events=run/'private/sdk-events.jsonl'
     rows=[json.loads(s) for s in events.read_text().splitlines()] if events.exists() else []
     initialized=read(run/'private/status.json') if (run/'private/status.json').exists() else {}
-    if not any(r.get('type')=='AssistantMessage' for r in rows) or not any(
+    if not productive_development(rows) or not any(
             'diagnose_candidate' in t for t in initialized.get('tools',[])):
         save(run/'pilot.json',{**meta,'status':'infrastructure_blocked',
              'worker_error':error or 'Actual model/MCP startup not established; preserve this attempt'})
