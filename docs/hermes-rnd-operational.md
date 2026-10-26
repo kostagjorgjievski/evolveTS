@@ -202,3 +202,26 @@ knowledge and negative results before choosing a distinct source-backed directio
 It does not reopen depleted investigations, expose branch-private work, change
 per-investigation limits, or bypass the existing daily time/session/cost and
 resource admission gates. Disable it to retain idle-after-frontier behavior.
+
+With `service.parallel_scout_reproducer: true`, the single root supervisor owns
+two process-isolated lanes: at most one MiniMax scout and one Kimi reproducer,
+always on different investigations. A completed scout hands its durable own-job
+state to Kimi. One waiting reproduction applies backpressure to new discovery.
+Existing task grading, CPU admission, provider slots, privacy and publisher gates
+are unchanged. This changes concurrency, not the approved budget.
+
+The parent reserves a session and its complete development-time allowance
+(including a 10-second cleanup margin) before starting either child. Combined
+reservations count toward the same UTC-day limits. Finished sessions settle to
+actual measured usage; unknown dollar billing remains unknown. The authoritative
+`parallel-state.json` atomically combines ledger and active reservations, while
+`service-ledger.json` mirrors it. Recovery adopts only matching process birth,
+module and session-directory identities. Children wait for durable admission
+before making a provider call. Failed workers pause further paid starts and
+retain their own drafts and receipts; their unresolved reservations stay charged.
+
+`status.json.active_sessions` and `current-session.json.sessions` list both
+lanes, investigation IDs and process identities. Usage includes reserved in-flight
+time, so it is conservative while a session runs. SIGTERM drains existing work;
+STOP/PAUSE prevents admission. Deployment from the serial service waits for its
+saved-session boundary. Never run a second supervisor for the same root.

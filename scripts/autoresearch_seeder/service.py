@@ -222,6 +222,11 @@ def serve(root, config, *, once=False, wait_for_owner=False, config_path=None):
     failures = 0
     atomic_write(root/'status.json',json.dumps({'pid':os.getpid(),'state':'starting','task':config['task'],'updated_utc':utc(),'current_session_file':str(root/'current-session.json')},indent=2))
     try:
+        if config.get('service', {}).get('parallel_scout_reproducer'):
+            if once:
+                raise ValueError('Parallel service requires the persistent supervisor')
+            from .parallel_service import serve_parallel_locked
+            return serve_parallel_locked(root, config, config_path)
         while not stop:
             try:
                 if config_path is not None:
