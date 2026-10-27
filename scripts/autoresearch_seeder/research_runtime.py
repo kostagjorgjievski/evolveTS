@@ -292,13 +292,13 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                 with admission:
                     waited=time.monotonic()-waiting
                     proxy=None
-                    if capacity and provider.get('name')=='glm':
+                    if capacity and provider.get('name') in ('glm','kimi_proxy'):
                         # Pin the actual Anthropic-compatible wire request, not just a profile label.
                         proxy_path=Path(capacity).with_name('effort_proxy.py')
                         spec=importlib.util.spec_from_file_location('hermes_glm_effort_proxy',proxy_path)
                         proxy_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(proxy_module)
                         endpoint,key,_=backend._endpoint(backend._credentials())
-                        proxy,url=proxy_module.start(key,job/'private/provider-requests.jsonl',provider='glm',
+                        proxy,url=proxy_module.start(key,job/'private/provider-requests.jsonl',provider=provider['name'],
                             upstream=endpoint,effort=provider['requested_effort'],model=provider['requested_model'])
                         backend.provider['endpoint_url']=url
                     try:result=backend.run(brief + prompt, tools, workspace, budget)
