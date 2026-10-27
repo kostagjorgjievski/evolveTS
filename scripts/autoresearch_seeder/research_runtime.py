@@ -241,7 +241,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
         role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished or prepared_follow_up else 'scout'
     _close(controller)
     provider = copy.deepcopy(research['provider'] if role == 'scout'
-                             else research.get('reproducer', research['provider']))
+                             else record.get('checkpoint', {}).get('reproducer_override', research.get('reproducer', research['provider'])))
 
     def factory(config):
         backend = HermesBackend(provider, job, app_root=ROOT)
