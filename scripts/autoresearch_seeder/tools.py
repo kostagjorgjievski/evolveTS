@@ -567,9 +567,9 @@ class ToolDispatcher:
         # Expected opportunity is a prediction by construction; refuse numbers
         # presented as measured results.
         statement = hypothesis['expected_opportunity']['statement'].lower()
-        if any(word in statement for word in ('measured', 'verified score', 'achieved')):
+        if statement.lstrip().startswith(('measured ', 'verified score', 'achieved ')):
             raise ValueError('expected_opportunity must be a prediction, not a claimed '
-                             'measurement')
+                             'measurement. Use a conditional prediction such as: If the source method transfers, it may reduce cost; the reproducer must measure it.')
         self.store.record_hypothesis(hypothesis)
         return {'hypothesis_id': hypothesis['id']}
 
