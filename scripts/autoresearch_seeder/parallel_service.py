@@ -46,6 +46,7 @@ def role_of(root, record, task, scout_ahead=False):
         if not (job/'private/research.sqlite').exists():return 'scout'
         store=ResearchStore(job/'private/research.sqlite')
         try:
+            if store.list_events('scout_lead'):return 'reproducer'
             packets=store.list_events('scout_packet')
             return 'reproducer' if packets and packets[-1]['packet']['handoff_status']=='ready_for_review' and packets[-1]['packet'].get('verified_spans') else 'scout'
         finally:store.close()
@@ -74,7 +75,8 @@ def lanes(config):
 
 def queue_key(record):
     # A public score is an ordering claim, never trusted validation evidence.
-    claim=record.get('checkpoint',{}).get('scheduling',{}).get('claimed_score')
+    from .scout_leads import task_score
+    claim=task_score(record.get('checkpoint',{}).get('scheduling',{}))
     if isinstance(claim,bool) or not isinstance(claim,(int,float)) or not math.isfinite(claim):claim=0
     return (-claim,-record['priority'],record['created_utc'],record['id'])
 
@@ -109,6 +111,8 @@ def select_candidate(root, config, active):
         candidates = [r for r in records if r['status'] in ('queued', 'active')
                       and agenda._budget_remaining(r) and r['id'] not in busy_ids
                       and cooldown_ready(r)]
+        for candidate in candidates:
+            candidate['checkpoint'].setdefault('scheduling',{})['task']=config['task']
         candidates.sort(key=queue_key)
         for lane in lanes(config):
             if lane not in active and not (lane == 'scout' and (Path(root)/'SCOUT_PAUSE').exists()):

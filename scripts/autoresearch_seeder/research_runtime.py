@@ -235,7 +235,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                           and record.get('checkpoint', {}).get('start_role') == 'reproducer')
     if research.get('service',{}).get('scout_ahead_queue'):
         packets=controller.store.list_events('scout_packet')
-        ready=bool(packets and packets[-1]['packet']['handoff_status']=='ready_for_review' and packets[-1]['packet'].get('verified_spans'))
+        ready=bool(controller.store.list_events('scout_lead')) or bool(packets and packets[-1]['packet']['handoff_status']=='ready_for_review' and packets[-1]['packet'].get('verified_spans'))
         role='reproducer' if ready or prepared_follow_up or record.get('checkpoint',{}).get('role')=='reproducer' else 'scout'
     else:
         role = 'reproducer' if controller.store.list_hypotheses() or scout_window_finished or prepared_follow_up else 'scout'
@@ -259,26 +259,12 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                               'Inspect the bundle audit/provenance before reusing code or data; '
                               'these are external sources, not private RSI discoveries.\n')
                 if role == 'scout':
-                    brief += ('ROLE: SCOUT. Inspect original external sources; compare distinct mechanisms. '
-                              'Record concrete hypotheses with source URLs, compatibility, risks and cheapest first test. '
-                              'Call propose_hypothesis with explicit source_urls (actual fetched URLs), then '
-                              'save a precise decision/next action. Finish after a useful shortlist; '
-                              'a separate reproducer continues your durable job. No official validation in this role.\n'
-                              'SCOUT V2: record_scout_packet now requires evidence_spans linking each substantive claim to an exact quote and source_url (optional repo relative_path). Quotes are checked against cached source bytes. Empty shells are retrieval failures, not source evidence. Repair pending citation/packet errors in prepared context before doing more broad searching. Read worker/known-public-methods.json before exploring. Shared sources are only duplicate candidates, not proof of the same method. '
-                              'Within this checkpoint call record_scout_packet after propose_hypothesis: exact original code sections, fetched dependencies, compatibility, uncertainty, cheapest falsifying test and rejection conditions. '
-                              'For DQI compare source-claimed R,Q,T with the tool-computed R*Q^2*T; do not rank by Toffolis alone. For chemistry use the actual task objective, not the DQI formula. For inverse square root use the task cost Q*(mean Toffolis + T-cost/4), with unchanged full-domain accuracy, phase and workspace checks. '
-                              'Distinguish source claims, predictions, diagnostics and official receipts. Never discard on predicted cost alone. '
-                              'For failed retrieval preserve exact URL/error and try original source/dependencies; do not infer blanket login requirements. '
-                              'If no promising direction remains, record a reject decision explaining sources, uncertainty and next action; do not invent a hypothesis to satisfy paperwork.\n')
-                    tools = [t for t in tools if t not in ('run_development_validation','copy_research_file','record_scout_review','submit_claim')]
-                    if not controller.store.list_events('scout_handoff_patch'):
-                        controller.store.event('scout_handoff_patch',{'version':1,'adopted_utc':utc(),'measurement':'Compare subsequent handoff latency, packet errors, reproducer reviews and verified seeds; adoption is not evidence of benefit.'})
-                    brief += ('HANDOFF FIRST: save_scout_draft as soon as a credible mechanism, fetched sources and first test are known. Update it incrementally; do not wait to exhaustively investigate every refinement. Before more broad searching, use check_scout_packet and repair its precise errors, then record_scout_packet and finish once ready. For individual fetched files omit relative_path; only repository directory citations use relative_path. Every evidence source_url must appear in the hypothesis source_urls; use repair_hypothesis_citations after verifying source identity. Never manufacture quotes. You cannot stage implementation files: reference cached binary/source paths in the packet for the reproducer instead of copy_research_file. Missing dependencies stay explicit; scope a separate independently testable hypothesis rather than pretending they are available.\n')
-                    from .handoff_guidance import SCOUT_HANDOFF_GUIDANCE
-                    brief += SCOUT_HANDOFF_GUIDANCE
-                    controller.store.event('handoff_wire_guidance', {'version': 2, 'utc': utc(), 'note': 'Exact schema examples; final evidence gates unchanged'})
+                    from .scout_leads import GUIDE
+                    brief += GUIDE
+                    tools=[t for t in tools if t in ('web_search','fetch_source','fetch_repository','read_research_file','list_research_files','record_scout_lead','finish')]
+                    controller.store.event('short_scout_adopted',{'version':3,'utc':utc()})
                 else:
-                    brief += ('ROLE: REPRODUCER. Implementation writes and full validation are host-blocked until this exact evidence-backed packet has an accepted_for_test or corrected review. You may read sources and run cheap diagnostic.py checks first. Legacy packets need resubmission with evidence_spans before review. Call record_scout_review for an existing packet after checking original sources; record corrected/rejected assumptions honestly. Read worker/scout-packet.json and worker/scout-checkpoint.json when present. Treat ready_for_review as structure only, never scientific acceptance. Independently check source claims, dependencies, arithmetic inputs and the cheapest falsification test before implementing. Record packet mistakes in record_decision notes. If rejection_audit_required is true, independently review the rejected direction within this existing budget before accepting rejection. Check the scout interpretation against original sources, correct errors, '
+                    brief += ('ROLE: REPRODUCER. Read the short scout lead in research-agenda.json. It is an unverified lead, not an audited method. Perform the source interpretation, retrieve dependencies and create the required evidence/review yourself before implementation. Do not send it back to the scout for prose polishing.  Implementation writes and full validation are host-blocked until this exact evidence-backed packet has an accepted_for_test or corrected review. You may read sources and run cheap diagnostic.py checks first. Legacy packets need resubmission with evidence_spans before review. Call record_scout_review for an existing packet after checking original sources; record corrected/rejected assumptions honestly. Read worker/scout-packet.json and worker/scout-checkpoint.json when present. Treat ready_for_review as structure only, never scientific acceptance. Independently check source claims, dependencies, arithmetic inputs and the cheapest falsification test before implementing. Record packet mistakes in record_decision notes. If rejection_audit_required is true, independently review the rejected direction within this existing budget before accepting rejection. Check the scout interpretation against original sources, correct errors, '
                               'If the scout left no structured hypotheses, first register source-linked hypotheses '
                               'from its own saved research, with explicit source_urls. '
                               'Implement and diagnose the selected method, then request full official validation. '
@@ -331,7 +317,7 @@ def run_materialized_investigation(agenda, record, knowledge, research):
         controller.store.event('scout_policy',{'version':VERSION,'adopted_utc':utc()})
     context = job / 'worker/research-agenda.json'
     context.write_text(json.dumps({'topic': record['topic'], 'branch': record.get('branch'),
-                                   'level': record['level'], 'eligible_knowledge': facts}, indent=2))
+                                   'level': record['level'], 'eligible_knowledge': facts, 'scout_lead': record.get('checkpoint',{}).get('scout_lead')}, indent=2))
     api = job / 'worker/task-api'
     api.mkdir(exist_ok=True)
     description = controller.adapter.paths.get('description')
@@ -384,6 +370,11 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                       'rejection_audit_required':quality['rejection_audit_required'],
                       'next_actions': [controller.store.last_decision().get('next_action', 'Continue own research')
                                        if controller.store.last_decision() else 'Continue own research']}
+        leads=controller.store.list_events('scout_lead')
+        if leads:
+            lead=leads[-1]['lead']
+            checkpoint.update(role='reproducer',start_role='reproducer',scout_lead=lead)
+            checkpoint['scheduling']={**record.get('checkpoint',{}).get('scheduling',{}),'task':research['task'],'overall_score':lead['overall_score'],'benchmark_scores':lead['benchmark_scores']}
         if finding:
             checkpoint['finding_id'] = finding['id']
         updated = agenda.record_session(record['id'],

@@ -138,6 +138,10 @@ TOOL_SCHEMAS['repair_hypothesis_citations']={'type':'object','properties':{'hypo
 TOOL_DESCRIPTIONS['repair_hypothesis_citations']='Correct an existing hypothesis citation list to exact fetched, hashed URLs after checking source/version identity. Records original URLs and reason; never edits source receipts or certifies interpretation. Then resubmit the scout packet.'
 
 
+from .scout_leads import SCHEMA as LEAD_SCHEMA
+TOOL_SCHEMAS['record_scout_lead']=LEAD_SCHEMA
+TOOL_DESCRIPTIONS['record_scout_lead']='Submit a short unverified source lead with overall and per-benchmark reported scores; unknown scores are null. No hypothesis, quotes or verification needed.'
+
 class AccessDenied(ValueError):
     """The configured access policy refuses this source."""
 
@@ -401,6 +405,10 @@ class ToolDispatcher:
         source=self._research_path(args['source']);dest=self._research_path(args['destination'],True)
         if not source.is_file() or source.stat().st_nlink!=1 or source.stat().st_size>32*2**20:raise ValueError('Regular source <=32MiB required')
         dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,dest);return {'path':str(dest.relative_to(self.job_dir)),'sha256':file_digest(dest)}
+
+    def _tool_record_scout_lead(self,args):
+        from .scout_leads import record
+        return record(self.store,args)
 
     # -- research tools -----------------------------------------------------------
     def _tool_web_search(self, args):
