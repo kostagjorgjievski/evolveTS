@@ -68,6 +68,12 @@ def lane_role(lane):
     return 'reproducer' if lane.startswith('reproducer') else lane
 
 
+def lane_paused(root, lane):
+    """Durable role holds block selection and admission without resetting work."""
+    marker = 'SCOUT_PAUSE' if lane_role(lane) == 'scout' else 'REPRODUCER_PAUSE'
+    return (Path(root)/marker).exists()
+
+
 def lanes(config):
     count=config.get('service',{}).get('reproducer_workers',1)
     return ['reproducer']+['reproducer_'+str(i) for i in range(2,count+1)]+['scout']
@@ -115,7 +121,7 @@ def select_candidate(root, config, active):
             candidate['checkpoint'].setdefault('scheduling',{})['task']=config['task']
         candidates.sort(key=queue_key)
         for lane in lanes(config):
-            if lane not in active and not (lane == 'scout' and (Path(root)/'SCOUT_PAUSE').exists()):
+            if lane not in active and not lane_paused(root, lane):
                 for record in candidates:
                     if role_of(root, record, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == lane_role(lane):
                         if lane_role(lane)=='reproducer' and config.get('service',{}).get('reproduction_triage'):
@@ -127,10 +133,10 @@ def select_candidate(root, config, active):
         if 'scout' in active or (Path(root)/'SCOUT_PAUSE').exists():
             return None
         # Backpressure: at most one completed scout waits for the reproducer.
-        if not config.get('service',{}).get('scout_ahead_queue') and any(role_of(root, r, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == 'reproducer' for r in candidates):
+        if not lane_paused(root, 'reproducer') and not config.get('service',{}).get('scout_ahead_queue') and any(role_of(root, r, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == 'reproducer' for r in candidates):
             return None
-        item = enqueue_public_follow_up(root, config, agenda, records)
-        free_reproducer=next((lane for lane in lanes(config) if lane_role(lane)=='reproducer' and lane not in active),None)
+        free_reproducer=next((lane for lane in lanes(config) if lane_role(lane)=='reproducer' and lane not in active and not lane_paused(root,lane)),None)
+        item = enqueue_public_follow_up(root, config, agenda, records) if free_reproducer else None
         if item and free_reproducer:
             return free_reproducer, item
         today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
@@ -262,7 +268,7 @@ class ParallelOwner:
             return self._admit(role, record, launcher)
 
     def _admit(self, role, record, launcher=None):
-        if role == 'scout' and (self.root/'SCOUT_PAUSE').exists():
+        if lane_paused(self.root, role):
             return False
         if role not in lanes(self.config):
             return False
