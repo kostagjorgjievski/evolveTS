@@ -8,6 +8,10 @@ def best_confirmed(root,task):
     root=Path(root);host=root.parents[2]
     key=(str(host),task)
     if key in _cache and time.monotonic()-_cache[key][0]<60:return _cache[key][1]
+    import sys
+    portable=Path(__file__).resolve().parents[3]/'RSI'
+    if not (portable/'dashboard/collect.py').is_file():raise RuntimeError('Verified-score collector requires the sibling RSI source checkout')
+    if str(portable) not in sys.path:sys.path.insert(0,str(portable))
     from dashboard.collect import sealed_seeds,campaign
     seeds,_,_=sealed_seeds(root,task)
     scores=[s['score'] for s in seeds]+[campaign(host,task).get('best_score') or 1.0]
