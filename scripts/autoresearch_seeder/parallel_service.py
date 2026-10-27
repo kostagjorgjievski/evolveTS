@@ -118,6 +118,11 @@ def select_candidate(root, config, active):
             if lane not in active and not (lane == 'scout' and (Path(root)/'SCOUT_PAUSE').exists()):
                 for record in candidates:
                     if role_of(root, record, config['task'],config.get('service',{}).get('scout_ahead_queue',False)) == lane_role(lane):
+                        if lane_role(lane)=='reproducer' and config.get('service',{}).get('reproduction_triage'):
+                            from .reproduction_policy import annotate,usage,exploration_allowance
+                            policy=annotate(root,config,record)
+                            if policy['bucket']=='skip':continue
+                            if policy['bucket']=='explore' and exploration_allowance(usage(root))<=10:continue
                         return lane, record
         if 'scout' in active or (Path(root)/'SCOUT_PAUSE').exists():
             return None
@@ -214,6 +219,13 @@ class ParallelOwner:
             # Keep its full reservation charged until its own recovery accounts it.
             if not outcome['ok'] and seconds == 0:
                 seconds = entry['reserved_seconds']
+            policy=record.get('checkpoint',{}).get('reproduction_policy',{})
+            if policy.get('mode')=='assessment':
+                agenda=Investigations(self.root/'investigations.sqlite')
+                try:
+                    current=agenda.get(entry['investigation']);cp=current['checkpoint'];cp['assessment_model_seconds']=cp.get('assessment_model_seconds',0)+seconds
+                    agenda.db.execute('UPDATE investigations SET checkpoint=? WHERE id=?',(json.dumps(cp),current['id']));agenda.db.commit()
+                finally:agenda.close()
             lane=self.lane_usage(entry['day'],role)
             lane['model_seconds']+=seconds-entry['reserved_seconds']
             lane['usd']+=max(0,after['usd']-before['usd'])
@@ -280,6 +292,20 @@ class ParallelOwner:
                       record['budgets']['max_model_seconds']-record['consumed']['model_seconds'])
         if seconds <= 0:
             return False
+        policy=record.get('checkpoint',{}).get('reproduction_policy',{})
+        if lane_role(role)=='reproducer' and self.config.get('service',{}).get('reproduction_triage'):
+            from .reproduction_policy import annotate,usage,exploration_allowance
+            policy=annotate(self.root,self.config,record)
+            if policy['bucket']=='skip':return False
+            if policy['bucket']=='explore':seconds=min(seconds,max(0,exploration_allowance(usage(self.root))-10))
+            if policy['mode']=='assessment':
+                spent=record.get('checkpoint',{}).get('assessment_model_seconds',0)
+                seconds=min(seconds,max(0,600-spent))
+            if seconds<=10:return False
+            agenda=Investigations(self.root/'investigations.sqlite')
+            try:
+                agenda.db.execute('UPDATE investigations SET checkpoint=? WHERE id=?',(json.dumps(record['checkpoint']),record['id']));agenda.db.commit()
+            finally:agenda.close()
         self.state['serial'] += 1
         work = self.root/'parallel-sessions'/(str(self.state['serial'])+'-'+uuid.uuid4().hex[:8])
         work.mkdir(parents=True, exist_ok=False)
@@ -287,7 +313,7 @@ class ParallelOwner:
                    'budgets': {**limits, 'session_seconds': seconds}}
         write(work/'runtime.json', runtime)
         entry = {'investigation': record['id'], 'role': role, 'day': day,
-                 'before': record['consumed'], 'reserved_seconds': seconds+10,
+                 'before': record['consumed'], 'reserved_seconds': seconds+10, 'policy_bucket':policy.get('bucket'),
                  'created_epoch': time.time(), 'started_utc': utc(), 'session_dir': str(work)}
         lane['sessions']+=1
         lane['model_seconds']+=entry['reserved_seconds']

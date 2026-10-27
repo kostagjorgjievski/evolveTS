@@ -254,6 +254,10 @@ def run_materialized_investigation(agenda, record, knowledge, research):
                 brief = ('Research agenda: ' + record['topic'] + '\n'
                          'Read worker/research-agenda.json and worker/task-api/description.txt. '
                          'Use only job-relative file tools; write code to worker/attempt_00/artifact/.\n')
+                policy=record.get('checkpoint',{}).get('reproduction_policy',{})
+                if role=='reproducer' and policy.get('mode')=='assessment':
+                    brief += 'SHORT ASSESSMENT ONLY: establish task-specific claimed factor and mechanism relevance, or run a cheap component diagnostic. No full validation/publication in this assessment. Save findings and finish. Do not restart the same assessment to reset its ten-minute total.\n'
+                    tools=[t for t in tools if t not in ('run_development_validation','submit_claim')]
                 if record.get('checkpoint', {}).get('public_inputs', research.get('public_inputs', [])):
                     brief += ('Operator-provided public materials are under sources/provided-*/. '
                               'Inspect the bundle audit/provenance before reusing code or data; '
