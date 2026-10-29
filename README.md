@@ -2,7 +2,7 @@
 
 Time-series task adapters for the original [Dream-RSI](https://github.com/google-research/dream-rsi) engine. Start from a minimal program, let a coding agent propose approaches, score them with a fixed evaluator, and use recorded discovery trees to improve the search controller through replay.
 
-This is a **fresh-start source distribution**. It contains no API keys, experiment histories, learned controllers, discovered programs, progress reports, datasets, checkpoint weights or local machine configuration. Every new campaign starts at E0. Anomaly and forecasting have separate evaluators, controllers, histories and replay pools. No agent skills workflow is required. (Exception on the `rca` branch only: `docs/rca_re1_champion_b/` ships one documented campaign artifact for reproducibility.)
+This is a **fresh-start source distribution**. It contains no API keys, experiment histories, learned controllers, discovered programs, progress reports, datasets, checkpoint weights or local machine configuration. Every new campaign starts at E0. Anomaly and forecasting have separate evaluators, controllers, histories and replay pools. No agent skills workflow is required. (Exception on the `rca` branch only: `docs/rca_re1_champion_a/` and `docs/rca_re1_champion_b/` ship two documented campaign artifacts for reproducibility.)
 
 ## Tasks
 
