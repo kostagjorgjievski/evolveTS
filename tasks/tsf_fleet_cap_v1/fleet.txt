@@ -1,0 +1,93 @@
+Next-Hour Fleet Capacity: streaming forecast DAG under deployment budgets.
+
+You operate the forecasting backend of a capacity planner for a fleet of
+services. Every hour the fleet's observed demand arrives; after ingesting it
+you must publish probabilistic forecasts for the next hours for any requested
+subset of services. Forecasts feed an autoscaler, so deadlines and footprint
+are as important as accuracy. Demand drifts, an incident multiplies load for
+a stretch of days, and brand-new services appear mid-operation with no
+history. This is a synthetic but operationally shaped workload; generator
+parameters are undisclosed and the held-out evaluation uses a different draw
+with a novel regime mix.
+
+THE PROGRAM
+
+Edit the EVOLVE block of the single starting Python file. Provide:
+
+  declare_dag() -> {"nodes": [{"name","kind","paths"}, ...],
+                    "edges": [[a, b], ...]}          # pipeline contract
+  class Forecaster:                                   # the pipeline itself
+      __init__(metadata)
+      train(history, metadata)                        # once, offline, GPU
+      update(batch, metadata)                         # every replay hour, CPU
+      forecast(ids, horizon, metadata) -> {"mean", "quantiles"}
+      save_state() -> bytes                           # serialized state
+      load_state(bytes)
+
+The declared DAG is contract metadata validated by the grader: at least 4
+nodes, at least 2 distinct kinds, exactly one "output" node, acyclic, every
+node reachable to the output. Allowed kinds: source, scaler, feature, router,
+model, ensemble, calibrator, output. Allowed paths: train, update, forecast.
+The declaration must describe the architecture you actually run; it is
+recorded and audited, and evolving it is part of the task.
+
+Data and metadata: history is a float32 NumPy array [N, T0] with NaN gaps;
+batch is float32 [N] for one hour (NaN = missing; services not yet launched
+are NaN until they appear). ids are ints in [0, N). metadata contains freq
+("h"), horizon, the 11 quantile levels, n_services, service_classes (coarse
+ops label per service: online/batch/db/misc), device, and hour_index for
+update calls. Return finite NumPy arrays:
+  mean:      [len(ids), horizon]
+  quantiles: [len(ids), 11, horizon]
+Quantiles must be nondecreasing in this order:
+  0.025, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.975.
+Repeated forecast calls with identical arguments must return identical
+values. save_state/load_state must round-trip: each replay day runs in a
+fresh process that resumes exclusively from your serialized state.
+
+BUDGETS AND GATES (development replay)
+
+  train:    120 seconds wall clock on one leased GPU (cuda:0), once.
+  update:   3.0 seconds per hourly call, single CPU core, every hour;
+            more than 3 late calls in the whole replay is disqualifying.
+  forecast: 30 milliseconds per call (calls cover up to 128 services),
+            CPU; more than 3 late calls is disqualifying.
+  state:    at most 100 MiB serialized, checked every day.
+  memory:   8 GiB resident per process.
+The replay is 7 days x 24 hours on 512 services after a 21-day history.
+Final evaluation replays 30 days on 2048 services after 60 days of history,
+with 1200 s train / 30 s update budgets; the ratios are unchanged. Budgets
+are measured by the grader from outside your process. A crash, an invalid
+output, a missed-size gate, or any exceeded strike limit scores zero; no
+configuration is silently dropped.
+
+Installed in the worker: NumPy 2.x, pandas, PyTorch (CUDA build; no nvcc),
+scikit-learn, scipy. One CPU core and one numerical thread during replay;
+set your thread counts accordingly. There is no network. Candidate files
+are executed with their working directory set to a scratch sandbox that
+also holds grader bookkeeping files (for example telemetry caches); reading
+grader files or any data other than the arrays passed to your methods is
+detectable and scores zero. Do not attempt dynamic code execution, native
+libraries, subprocesses, or environment access; the static audit rejects
+them. Do not special-case the grader: the final timeline is a different
+draw, and checkpoints from the public replay are re-graded on unseen
+continuations.
+
+OBJECTIVE
+
+Probabilistic quality: the same CRPS approximation GIFT-Eval uses
+(mean weighted pinball loss over levels 0.1..0.9), normalised per series by
+its pre-replay history scale, averaged per regime group (smooth, diurnal,
+spiky, episodic, volatile, cold-start; canary probes excluded). The search
+score is the geometric mean over groups of starter_CRPS / your_CRPS; the
+seasonal-naive starter scores 1.0 and higher is better. Groups are equally
+weighted, so robustness across regimes and the incident window matters more
+than excellence on one regime. The public score is development feedback
+only; it is not the held-out result and establishes no leaderboard claim.
+
+The starting program blends seasonal naive with an EWMA and a rolling
+residual conformal layer. The architecture is yours to design: statistical
+models, small neural nets trained inside the train budget, incremental
+learners, routers over service classes, ensemble tiers, online calibrators,
+amortised refits sliced into update calls - anything that fits the gates.
+No particular algorithm is required.

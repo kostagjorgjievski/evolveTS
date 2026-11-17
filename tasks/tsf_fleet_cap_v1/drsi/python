@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# The upstream scripts call "$PYTHON -m dream_rsi"; route that through the
+# per-call accounting wrapper and everything else to the real interpreter.
+if [ "${1:-}" = -m ] && [ "${2:-}" = dream_rsi ]; then
+  shift 2
+  exec "$DRSI_REAL_PYTHON" "$DRSI_PROJECT/scripts/run_bounded.py" "$@"
+fi
+exec "$DRSI_REAL_PYTHON" "$@"
